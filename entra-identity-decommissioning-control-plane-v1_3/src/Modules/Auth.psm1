@@ -1,19 +1,19 @@
 # Auth.psm1 — Service connection layer
-# v1.5: AppRoleAssignment.ReadWrite.All downgraded to AppRoleAssignment.Read.All —
-#        Lite discovery does not mutate app role assignments.
-#        Version comment updated to v1.5.
+# v1.2: Full 7-scope Graph connection restored (regression fix — v1.1 silently dropped 3 scopes).
+#        Connect-DecomServices composite removed — workflow calls Graph and Exchange individually.
+#        Each connection emits its own evidence result for full audit trail.
 
 function Connect-DecomGraph {
     [CmdletBinding()]
     param([pscustomobject]$Context)
-    # v1.5: AppRoleAssignment.ReadWrite.All -> AppRoleAssignment.Read.All (least privilege)
+    # Full scope set required for Discovery (AppRoleAssignment, OAuthGrant) and all control actions
     $Scopes = @(
         'User.ReadWrite.All',
         'Directory.ReadWrite.All',
         'Organization.Read.All',
         'RoleManagement.Read.Directory',
         'Application.Read.All',
-        'AppRoleAssignment.Read.All',
+        'AppRoleAssignment.ReadWrite.All',
         'DelegatedPermissionGrant.Read.All'
     )
     try {
@@ -22,7 +22,7 @@ function Connect-DecomGraph {
         $r = New-DecomActionResult -ActionName 'Connect Microsoft Graph' -Phase 'Authentication' `
             -Status 'Success' -IsCritical $true -TargetUPN $Context.TargetUPN `
             -Message 'Connected to Microsoft Graph.' `
-            -Evidence @{ TenantId = $ctx.TenantId; Account = $ctx.Account; ScopeCount = $Scopes.Count; Scopes = $Scopes } `
+            -Evidence @{ TenantId = $ctx.TenantId; Account = $ctx.Account; ScopeCount = $Scopes.Count } `
             -ControlObjective 'Establish authorized Graph control channel' `
             -RiskMitigated 'Unauthorized or incomplete identity-plane execution'
         Add-DecomEvidenceEvent -Context $Context -Phase $r.Phase -ActionName $r.ActionName `
@@ -62,16 +62,4 @@ function Connect-DecomExchange {
     }
 }
 
-# Required Graph scopes for external reference and testing
-$script:RequiredGraphScopes = @(
-    'User.ReadWrite.All',
-    'Directory.ReadWrite.All',
-    'Organization.Read.All',
-    'RoleManagement.Read.Directory',
-    'Application.Read.All',
-    'AppRoleAssignment.Read.All',
-    'DelegatedPermissionGrant.Read.All'
-)
-function Get-DecomRequiredGraphScopes { return $script:RequiredGraphScopes }
-
-Export-ModuleMember -Function Connect-DecomGraph, Connect-DecomExchange, Get-DecomRequiredGraphScopes
+Export-ModuleMember -Function Connect-DecomGraph, Connect-DecomExchange

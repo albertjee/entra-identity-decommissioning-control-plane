@@ -1,6 +1,6 @@
 # Entra Identity Decommissioning Control Plane
 
-**Version:** v1.5 Stable  
+**Version:** v1.0 Stable  
 **Maturity:** Production-safety release candidate for controlled tenant validation  
 **Author:** Albert Jee — Enterprise Identity Architect | IAM Consultant  
 **Copyright:** © 2026 Albert Jee. All rights reserved.
@@ -55,7 +55,7 @@ The tool is intentionally conservative:
 
 ## Requirements
 
-- PowerShell 5.1+ (tested on 5.1 and 7+)
+- PowerShell 7+
 - Microsoft Graph PowerShell SDK
 - ExchangeOnlineManagement module
 - Admin account with required delegated privileges

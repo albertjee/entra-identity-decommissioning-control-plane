@@ -1,8 +1,6 @@
 # Models.psm1 — Core data contracts for the Decom Control Plane
-# v1.5: OperatorUPN, OperatorObjectId added to Context.
-#        SealEvidence flag added (default true).
-#        TicketId mandatory in Force+NonInteractive mode (enforced in Start-Decom.ps1).
-#        Version updated to v1.5.
+# v1.2: Added StepId (deterministic phase-scoped key), ManualFollowUp field,
+#        ValidationOnly + EvidenceLevel + CorrelationId restored to Context.
 
 function New-DecomRunContext {
     [CmdletBinding()]
@@ -15,30 +13,25 @@ function New-DecomRunContext {
         [switch]$WhatIfMode,
         [switch]$NonInteractive,
         [switch]$Force,
-        [switch]$ValidationOnly,
-        [switch]$NoSeal,          # opt-out of evidence sealing (testing/dev only)
-        [string]$OperatorUPN,     # v1.5: operator identity for repudiation resistance
-        [string]$OperatorObjectId # v1.5: operator AAD ObjectId
+        [switch]$ValidationOnly
     )
     [pscustomobject]@{
-        TargetUPN        = $TargetUPN
-        TicketId         = $TicketId
-        OutputPath       = $OutputPath
-        EvidenceLevel    = $EvidenceLevel
-        WhatIf           = [bool]$WhatIfMode
-        NonInteractive   = [bool]$NonInteractive
-        Force            = [bool]$Force
-        ValidationOnly   = [bool]$ValidationOnly
-        SealEvidence     = -not [bool]$NoSeal   # default: seal evidence
-        OperatorUPN      = $OperatorUPN
-        OperatorObjectId = $OperatorObjectId
-        StartedUtc       = (Get-Date).ToUniversalTime().ToString('o')
-        CorrelationId    = [guid]::NewGuid().Guid
+        TargetUPN       = $TargetUPN
+        TicketId        = $TicketId
+        OutputPath      = $OutputPath
+        EvidenceLevel   = $EvidenceLevel
+        WhatIf          = [bool]$WhatIfMode
+        NonInteractive  = [bool]$NonInteractive
+        Force           = [bool]$Force
+        ValidationOnly  = [bool]$ValidationOnly
+        StartedUtc      = (Get-Date).ToUniversalTime().ToString('o')
+        CorrelationId   = [guid]::NewGuid().Guid
     }
 }
 
+# StepId convention: PHASE-NNN e.g. CONTAINMENT-001
+# This is the stable key for Premium drift/history tracking across runs.
 $script:StepCounters = @{}
-
 function New-DecomStepId {
     param([string]$Phase)
     $key = $Phase.ToUpper()
@@ -46,8 +39,6 @@ function New-DecomStepId {
     $script:StepCounters[$key]++
     return '{0}-{1:D3}' -f $key, $script:StepCounters[$key]
 }
-
-function Reset-DecomStepCounters { $script:StepCounters = @{} }
 
 function New-DecomActionResult {
     [CmdletBinding()]
@@ -63,12 +54,12 @@ function New-DecomActionResult {
         [hashtable]$AfterState,
         [string[]]$WarningMessages,
         [string[]]$BlockerMessages,
-        [string[]]$ManualFollowUp,
+        [string[]]$ManualFollowUp,       # v1.2 — spec-required field; used by Premium follow-up tracking
         [string]$RecommendedNext,
         [string]$ControlObjective,
         [string]$RiskMitigated,
         [string]$FailureClass,
-        [string]$StepId
+        [string]$StepId                  # v1.2 — deterministic phase-scoped key for drift tracking
     )
     [pscustomobject]@{
         StepId           = if ($StepId) { $StepId } else { New-DecomStepId -Phase $Phase }
@@ -80,12 +71,12 @@ function New-DecomActionResult {
         TimestampUtc     = (Get-Date).ToUniversalTime().ToString('o')
         TargetUPN        = $TargetUPN
         Message          = $Message
-        BeforeState      = if ($BeforeState)     { $BeforeState }     else { @{} }
-        AfterState       = if ($AfterState)      { $AfterState }      else { @{} }
-        Evidence         = if ($Evidence)        { $Evidence }        else { @{} }
-        WarningMessages  = if ($WarningMessages) { $WarningMessages } else { @() }
-        BlockerMessages  = if ($BlockerMessages) { $BlockerMessages } else { @() }
-        ManualFollowUp   = if ($ManualFollowUp)  { $ManualFollowUp }  else { @() }
+        BeforeState      = if ($BeforeState)      { $BeforeState }      else { @{} }
+        AfterState       = if ($AfterState)       { $AfterState }       else { @{} }
+        Evidence         = if ($Evidence)         { $Evidence }         else { @{} }
+        WarningMessages  = if ($WarningMessages)  { $WarningMessages }  else { @() }
+        BlockerMessages  = if ($BlockerMessages)  { $BlockerMessages }  else { @() }
+        ManualFollowUp   = if ($ManualFollowUp)   { $ManualFollowUp }   else { @() }
         RecommendedNext  = $RecommendedNext
         ControlObjective = $ControlObjective
         RiskMitigated    = $RiskMitigated
@@ -108,14 +99,11 @@ function New-DecomWorkflowReturn {
             TargetUPN     = $Context.TargetUPN
             RunId         = $State.RunId
             CorrelationId = $Context.CorrelationId
-            OperatorUPN   = $Context.OperatorUPN
-            TicketId      = $Context.TicketId
             Status        = if ($StopReason) { 'Stopped' } else { 'Completed' }
-            Version       = 'v1.5'
+            Version       = 'v1.2'
             EvidenceLevel = $Context.EvidenceLevel
-            Sealed        = $Context.SealEvidence
         }
     }
 }
 
-Export-ModuleMember -Function New-DecomRunContext, New-DecomActionResult, New-DecomWorkflowReturn, New-DecomStepId, Reset-DecomStepCounters
+Export-ModuleMember -Function New-DecomRunContext, New-DecomActionResult, New-DecomWorkflowReturn, New-DecomStepId

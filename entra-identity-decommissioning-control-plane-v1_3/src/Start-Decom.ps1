@@ -1,9 +1,8 @@
 # Start-Decom.ps1 — Launcher / workflow controller
-# v1.5: OperatorUPN resolved from MgContext after auth.
-#        TicketId mandatory when Force+NonInteractive (automation mode governance).
-#        SealEvidence default true; -NoSeal opt-out for dev/test.
-#        evidence.manifest.json written at end of every run.
-#        Version updated to v1.5.
+# v1.2: ValidationOnly switch restored (was dropped in v1.1 — regression fix).
+#        EvidenceLevel param restored.
+#        CorrelationId and full Context contract restored.
+#        Module load order: Models first, then consumers.
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
@@ -14,7 +13,6 @@ param(
     [Parameter(Mandatory = $false)]
     [string]$OutOfOfficeMessage,
 
-    # v1.5: TicketId mandatory in Force+NonInteractive mode
     [Parameter(Mandatory = $false)]
     [string]$TicketId,
 
@@ -25,18 +23,11 @@ param(
     [switch]$RemoveLicenses,
     [switch]$ValidationOnly,
     [switch]$NonInteractive,
-    [switch]$Force,
-    [switch]$NoSeal   # opt-out of evidence sealing (dev/test only)
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-
-# v1.5: Enforce TicketId in automation mode
-if ($Force -and $NonInteractive -and -not $TicketId) {
-    Write-Error "TicketId is required when running in -Force -NonInteractive mode. Provide a change/ticket reference for audit traceability."
-    exit 1
-}
 
 $Root        = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ModulesPath = Join-Path $Root 'Modules'
@@ -66,45 +57,29 @@ $Context = New-DecomRunContext `
     -WhatIfMode:    ([bool]$WhatIfPreference) `
     -NonInteractive:$NonInteractive `
     -Force:         $Force `
-    -ValidationOnly:$ValidationOnly `
-    -NoSeal:        $NoSeal
+    -ValidationOnly:$ValidationOnly
 
 $State = New-DecomState -RunId $RunId
-Initialize-DecomEvidenceStore -Context $Context -RunId $RunId -NdjsonPath $EvidenceFile
+Initialize-DecomEvidenceStore -Context $Context -RunId $RunId
 
-Write-DecomConsole -Level 'INFO' -Message "Entra Identity Decommissioning Control Plane v1.5"
-Write-DecomConsole -Level 'INFO' -Message "Target: $TargetUPN | RunId: $RunId | Mode: $(if($ValidationOnly){'ValidationOnly'}elseif($WhatIfPreference){'WhatIf'}else{'Live'}) | Sealed: $(-not $NoSeal)"
+Write-DecomConsole -Level 'INFO' -Message "Entra Identity Decommissioning Control Plane v1.2"
+Write-DecomConsole -Level 'INFO' -Message "Target: $TargetUPN | RunId: $RunId | Mode: $(if($ValidationOnly){'ValidationOnly'}elseif($WhatIfPreference){'WhatIf'}else{'Live'})"
 
 try {
     $Result = Invoke-DecomWorkflow `
-        -Context              $Context `
-        -State                $State `
-        -OutOfOfficeMessage   $OutOfOfficeMessage `
+        -Context             $Context `
+        -State               $State `
+        -OutOfOfficeMessage  $OutOfOfficeMessage `
         -EnableLitigationHold:$EnableLitigationHold `
-        -RemoveLicenses:      $RemoveLicenses `
-        -Cmdlet               $PSCmdlet
+        -RemoveLicenses:     $RemoveLicenses `
+        -Cmdlet              $PSCmdlet
 
-    # v1.5: Resolve operator identity from Graph context if available
-    try {
-        $mgCtx = Get-MgContext -ErrorAction SilentlyContinue
-        if ($mgCtx) {
-            $Context.OperatorUPN      = $mgCtx.Account
-            $mgUser = Get-MgUser -UserId $mgCtx.Account -Property Id -ErrorAction SilentlyContinue
-            if ($mgUser) { $Context.OperatorObjectId = $mgUser.Id }
-        }
-    } catch {}
-
-    $JsonPath     = Join-Path $OutputRoot 'report.json'
-    $HtmlPath     = Join-Path $OutputRoot 'report.html'
-    $ManifestPath = Join-Path $OutputRoot 'evidence.manifest.json'
-
+    $JsonPath = Join-Path $OutputRoot 'report.json'
+    $HtmlPath = Join-Path $OutputRoot 'report.html'
     Export-DecomJsonReport -WorkflowResult $Result -Path $JsonPath
     Export-DecomHtmlReport -WorkflowResult $Result -Path $HtmlPath
-    Write-DecomEvidenceManifest -Context $Context -OutputPath $OutputRoot | Out-Null
 
     Write-DecomConsole -Level 'INFO' -Message "Workflow completed. Output: $OutputRoot"
-    Write-DecomConsole -Level 'INFO' -Message "Evidence manifest: $ManifestPath"
-
     if ($Result.StopReason) {
         Write-DecomConsole -Level 'WARN' -Message "Stop reason: $($Result.StopReason)"
         exit 2

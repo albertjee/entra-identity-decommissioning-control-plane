@@ -1,5 +1,5 @@
 # Reporting.psm1 — HTML and JSON evidence report generation
-# v1.5: ManualFollowUp column added to HTML report table.
+# v1.2: ManualFollowUp column added to HTML report table.
 #        Print stylesheet added (@media print) for audit/compliance handoff.
 #        Status row color coding retained and extended to include ManualFollowUp indicator.
 
@@ -110,7 +110,7 @@ ul { margin: 4px 0; padding-left: 18px; }
 <p><strong>Target:</strong> $(ConvertTo-DecomHtmlEncoded $WorkflowResult.Context.TargetUPN)</p>
 <p><strong>Run ID:</strong> $(ConvertTo-DecomHtmlEncoded $WorkflowResult.State.RunId) &nbsp;|&nbsp;
    <strong>Correlation ID:</strong> $(ConvertTo-DecomHtmlEncoded $WorkflowResult.Context.CorrelationId) &nbsp;|&nbsp;
-   <strong>Version:</strong> v1.5 &nbsp;|&nbsp;
+   <strong>Version:</strong> v1.2 &nbsp;|&nbsp;
    <strong>Evidence Level:</strong> $(ConvertTo-DecomHtmlEncoded $WorkflowResult.Context.EvidenceLevel)</p>
 <div class="summary">
   <div class="card"><strong>Success</strong><br>$($Counts.Success)</div>
