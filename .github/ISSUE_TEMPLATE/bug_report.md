@@ -1,25 +1,18 @@
 ---
 name: Bug report
-about: Report a reproducible defect
+about: Report a defect in the identity decommissioning control plane
+title: '[Bug]: '
+labels: bug
 ---
+
+## Summary
 
 ## Environment
 
-- PowerShell version:
-- Graph SDK version:
-- ExchangeOnlineManagement version:
-- Tenant type:
+## Steps to reproduce
 
-## Command
+## Expected behavior
 
-```powershell
+## Actual behavior
 
-```
-
-## Expected Behavior
-
-## Actual Behavior
-
-## Evidence Artifact
-
-Attach sanitized `report.json` or relevant `evidence.ndjson` lines.
+## Evidence

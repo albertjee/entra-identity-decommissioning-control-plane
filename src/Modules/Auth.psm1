@@ -1,15 +1,77 @@
+# Auth.psm1 — Service connection layer
+# v1.4: AppRoleAssignment.ReadWrite.All downgraded to AppRoleAssignment.Read.All —
+#        Lite discovery does not mutate app role assignments.
+#        Version comment updated to v1.4.
+
 function Connect-DecomGraph {
     [CmdletBinding()]
     param([pscustomobject]$Context)
-    $Scopes=@('User.ReadWrite.All','Directory.ReadWrite.All','Organization.Read.All','RoleManagement.Read.Directory','Application.Read.All','AppRoleAssignment.ReadWrite.All','DelegatedPermissionGrant.Read.All')
-    try { Connect-MgGraph -Scopes $Scopes -NoWelcome | Out-Null; $ctx=Get-MgContext; $r=New-DecomActionResult -ActionName 'Connect Microsoft Graph' -Phase 'Authentication' -Status 'Success' -IsCritical $true -TargetUPN $Context.TargetUPN -Message 'Connected to Microsoft Graph.' -Evidence @{TenantId=$ctx.TenantId; Account=$ctx.Account; Scopes=$Scopes} -ControlObjective 'Establish authorized Graph control channel' -RiskMitigated 'Unauthorized or incomplete identity-plane execution'; Add-DecomEvidenceEvent -Context $Context -Phase $r.Phase -ActionName $r.ActionName -Status $r.Status -IsCritical $r.IsCritical -Message $r.Message -Evidence $r.Evidence -ControlObjective $r.ControlObjective -RiskMitigated $r.RiskMitigated | Out-Null; $r }
-    catch { $r=New-DecomActionResult -ActionName 'Connect Microsoft Graph' -Phase 'Authentication' -Status 'Failed' -IsCritical $true -TargetUPN $Context.TargetUPN -Message $_.Exception.Message -BlockerMessages @('Microsoft Graph connection failed.') -RecommendedNext 'Verify Graph module, scopes, and admin consent'; Add-DecomEvidenceEvent -Context $Context -Phase $r.Phase -ActionName $r.ActionName -Status $r.Status -IsCritical $true -Message $r.Message -ErrorRecord $_ | Out-Null; $r }
+    # v1.4: AppRoleAssignment.ReadWrite.All -> AppRoleAssignment.Read.All (least privilege)
+    $Scopes = @(
+        'User.ReadWrite.All',
+        'Directory.ReadWrite.All',
+        'Organization.Read.All',
+        'RoleManagement.Read.Directory',
+        'Application.Read.All',
+        'AppRoleAssignment.Read.All',
+        'DelegatedPermissionGrant.Read.All'
+    )
+    try {
+        Connect-MgGraph -Scopes $Scopes -NoWelcome | Out-Null
+        $ctx = Get-MgContext
+        $r = New-DecomActionResult -ActionName 'Connect Microsoft Graph' -Phase 'Authentication' `
+            -Status 'Success' -IsCritical $true -TargetUPN $Context.TargetUPN `
+            -Message 'Connected to Microsoft Graph.' `
+            -Evidence @{ TenantId = $ctx.TenantId; Account = $ctx.Account; ScopeCount = $Scopes.Count; Scopes = $Scopes } `
+            -ControlObjective 'Establish authorized Graph control channel' `
+            -RiskMitigated 'Unauthorized or incomplete identity-plane execution'
+        Add-DecomEvidenceEvent -Context $Context -Phase $r.Phase -ActionName $r.ActionName `
+            -Status $r.Status -IsCritical $r.IsCritical -Message $r.Message -Evidence $r.Evidence `
+            -ControlObjective $r.ControlObjective -RiskMitigated $r.RiskMitigated | Out-Null
+        return $r
+    } catch {
+        return New-DecomActionResult -ActionName 'Connect Microsoft Graph' -Phase 'Authentication' `
+            -Status 'Failed' -IsCritical $true -TargetUPN $Context.TargetUPN `
+            -Message $_.Exception.Message `
+            -BlockerMessages @('Microsoft Graph connection failed. Verify module, scopes, and admin consent.') `
+            -FailureClass 'Critical'
+    }
 }
+
 function Connect-DecomExchange {
     [CmdletBinding()]
     param([pscustomobject]$Context)
-    try { Connect-ExchangeOnline -ShowBanner:$false | Out-Null; $r=New-DecomActionResult -ActionName 'Connect Exchange Online' -Phase 'Authentication' -Status 'Success' -IsCritical $true -TargetUPN $Context.TargetUPN -Message 'Connected to Exchange Online.' -Evidence @{ExchangeOnline='Connected'} -ControlObjective 'Establish mailbox/compliance control channel' -RiskMitigated 'Incomplete mailbox continuity and compliance execution'; Add-DecomEvidenceEvent -Context $Context -Phase $r.Phase -ActionName $r.ActionName -Status $r.Status -IsCritical $r.IsCritical -Message $r.Message -Evidence $r.Evidence | Out-Null; $r }
-    catch { $r=New-DecomActionResult -ActionName 'Connect Exchange Online' -Phase 'Authentication' -Status 'Failed' -IsCritical $true -TargetUPN $Context.TargetUPN -Message $_.Exception.Message -BlockerMessages @('Exchange Online connection failed.') -RecommendedNext 'Verify EXO module and permissions'; Add-DecomEvidenceEvent -Context $Context -Phase $r.Phase -ActionName $r.ActionName -Status $r.Status -IsCritical $true -Message $r.Message -ErrorRecord $_ | Out-Null; $r }
+    try {
+        Connect-ExchangeOnline -ShowBanner:$false | Out-Null
+        $r = New-DecomActionResult -ActionName 'Connect Exchange Online' -Phase 'Authentication' `
+            -Status 'Success' -IsCritical $true -TargetUPN $Context.TargetUPN `
+            -Message 'Connected to Exchange Online.' `
+            -Evidence @{ ExchangeOnline = 'Connected' } `
+            -ControlObjective 'Establish mailbox and compliance control channel' `
+            -RiskMitigated 'Incomplete mailbox continuity and compliance execution'
+        Add-DecomEvidenceEvent -Context $Context -Phase $r.Phase -ActionName $r.ActionName `
+            -Status $r.Status -IsCritical $r.IsCritical -Message $r.Message -Evidence $r.Evidence `
+            -ControlObjective $r.ControlObjective -RiskMitigated $r.RiskMitigated | Out-Null
+        return $r
+    } catch {
+        return New-DecomActionResult -ActionName 'Connect Exchange Online' -Phase 'Authentication' `
+            -Status 'Failed' -IsCritical $true -TargetUPN $Context.TargetUPN `
+            -Message $_.Exception.Message `
+            -BlockerMessages @('Exchange Online connection failed. Verify EXO module and permissions.') `
+            -FailureClass 'Critical'
+    }
 }
-function Connect-DecomServices { param([pscustomobject]$Context) $g=Connect-DecomGraph -Context $Context; if($g.Status -ne 'Success'){return $g}; $e=Connect-DecomExchange -Context $Context; if($e.Status -ne 'Success'){return $e}; New-DecomActionResult -ActionName 'Connect Services' -Phase 'Authentication' -Status 'Success' -IsCritical $true -TargetUPN $Context.TargetUPN -Message 'Connected to required services.' -Evidence @{Graph='Connected';Exchange='Connected'} -RecommendedNext 'Validate target UPN' }
-Export-ModuleMember -Function Connect-DecomGraph,Connect-DecomExchange,Connect-DecomServices
+
+# Required Graph scopes for external reference and testing
+$script:RequiredGraphScopes = @(
+    'User.ReadWrite.All',
+    'Directory.ReadWrite.All',
+    'Organization.Read.All',
+    'RoleManagement.Read.Directory',
+    'Application.Read.All',
+    'AppRoleAssignment.Read.All',
+    'DelegatedPermissionGrant.Read.All'
+)
+function Get-DecomRequiredGraphScopes { return $script:RequiredGraphScopes }
+
+Export-ModuleMember -Function Connect-DecomGraph, Connect-DecomExchange, Get-DecomRequiredGraphScopes
