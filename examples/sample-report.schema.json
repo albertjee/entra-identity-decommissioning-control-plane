@@ -1,0 +1,15 @@
+{
+  "SchemaVersion": "1.0",
+  "ToolVersion": "v1.0",
+  "CorrelationId": "guid",
+  "RunId": "guid",
+  "TargetUPN": "user@contoso.com",
+  "Phase": "Containment",
+  "Action": "Block Sign-In",
+  "Status": "Success",
+  "BeforeState": {},
+  "AfterState": {},
+  "Evidence": {},
+  "ControlObjective": "Deny future interactive authentication",
+  "RiskMitigated": "Continued account access"
+}
