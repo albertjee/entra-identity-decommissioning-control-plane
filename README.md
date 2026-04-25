@@ -1,7 +1,7 @@
 # Entra Identity Decommissioning Control Plane
 
-**Version:** v1.4 Stable  
-**Maturity:** Production-safety release candidate for controlled tenant validation  
+**Version:** v1.4  
+**Maturity:** Lite rev0.50 — hardened, spec-complete, lab-validated candidate  
 **Author:** Albert Jee — Enterprise Identity Architect | IAM Consultant  
 **Copyright:** © 2026 Albert Jee. All rights reserved.
 
@@ -11,56 +11,73 @@ The Entra Identity Decommissioning Control Plane is a PowerShell reference imple
 
 This project treats identity decommissioning as a **control-plane operation**, not a help-desk script. The goal is to reduce revocation latency, preserve mailbox/compliance continuity, block unsafe license removal, and generate audit-defensible evidence for every meaningful action.
 
+## Version History
+
+| Version | Description |
+|---|---|
+| v1.4 | Hygiene + spec completion — full delegation discovery, evidence contract, scope fix |
+| v1.3 | Hardening — guardrail semantics, evidence integrity, 38 Pester tests |
+| v1.2 | Spec alignment — StepId, ManualFollowUp, MFA snapshot, guest guard |
+| v1.1 | Remediation — modulo bias fix, PIM roles, group license detection |
+| v1.0 | Initial release — production-safety release candidate |
+
 ## Production Safety Position
 
-v1.0 is designed for controlled production use only after the operator has completed the tenant validation guide and verified required permissions in a lab or pilot tenant.
+v1.4 is designed for controlled production use after completing the tenant validation guide and verifying required permissions in a lab or pilot tenant.
 
 The tool is intentionally conservative:
 
-- destructive actions support PowerShell `ShouldProcess`
-- `-WhatIf` produces evidence without mutating tenant state
-- license removal is blocked when compliance or mailbox prerequisites are unresolved
-- pre-action and post-action snapshots are captured
-- every action emits a forensic-grade evidence event
-- JSON, HTML, and NDJSON evidence outputs are generated
+* Destructive actions support PowerShell `ShouldProcess`
+* `-WhatIf` produces evidence without mutating tenant state
+* `-ValidationOnly` runs full discovery and snapshots without any mutations
+* License removal is blocked when compliance or mailbox prerequisites are unresolved
+* Pre-action and post-action snapshots are captured
+* Every action emits a forensic-grade evidence event
+* JSON, HTML, and NDJSON evidence outputs are generated
+* 54 Pester unit tests — all passing
 
 ## Scope
 
 ### In Scope
 
-- Single UPN decommissioning
-- Cloud-only Microsoft 365 / Entra ID tenants
-- Microsoft Graph PowerShell SDK
-- Exchange Online PowerShell
-- Delegated interactive admin authentication
-- Password reset
-- Session revocation
-- Sign-in block
-- Mailbox conversion to shared
-- Auto-reply configuration
-- Litigation Hold enablement
-- Retention / archive / hold-aware license readiness checks
-- Group, privileged role, ownership, OAuth, and app-role discovery
-- Forensic evidence output
+* Single UPN decommissioning
+* Cloud-only Microsoft 365 / Entra ID tenants
+* Microsoft Graph PowerShell SDK
+* Exchange Online PowerShell
+* Delegated interactive admin authentication
+* Password reset
+* Session revocation
+* Sign-in block
+* Mailbox conversion to shared
+* Auto-reply configuration
+* Litigation Hold enablement
+* Retention / archive / hold-aware license readiness checks
+* Group, privileged role, ownership, OAuth, and app-role discovery
+* PIM eligible role discovery
+* Mailbox delegation discovery (FullAccess, SendAs, SendOnBehalf)
+* MFA authentication method discovery
+* Guest account detection and warning
+* Forensic evidence output
 
-### Out of Scope
+### Out of Scope (Lite edition — deferred to Premium)
 
-- Hybrid Exchange / AD DS decommissioning
-- Destructive bulk execution
-- Automatic group removal
-- Automatic privileged-role removal
-- Automatic application ownership reassignment
-- Automatic OAuth grant removal
-- Full Purview eDiscovery case workflow automation
+* Hybrid Exchange / AD DS decommissioning
+* Destructive bulk execution
+* Automatic group removal
+* Automatic privileged-role removal
+* Automatic application ownership reassignment
+* Automatic OAuth grant removal
+* Full Purview eDiscovery case workflow automation
+* Dependency mapping and blast-radius estimation
+* Confidence scoring
+* Batch orchestration
 
 ## Requirements
 
-- PowerShell 7+
-- Microsoft Graph PowerShell SDK
-- ExchangeOnlineManagement module
-- Admin account with required delegated privileges
-
-Recommended modules:
+* PowerShell 5.1+ (7+ recommended)
+* Microsoft Graph PowerShell SDK
+* ExchangeOnlineManagement module
+* Admin account with required delegated privileges
 
 ```powershell
 Install-Module Microsoft.Graph -Scope CurrentUser
@@ -71,21 +88,19 @@ Install-Module PSScriptAnalyzer -Scope CurrentUser
 
 ## Required Graph Scopes
 
-The default connection requests:
-
-- `User.ReadWrite.All`
-- `Directory.ReadWrite.All`
-- `Organization.Read.All`
-- `RoleManagement.Read.Directory`
-- `Application.Read.All`
-- `AppRoleAssignment.ReadWrite.All`
-- `DelegatedPermissionGrant.Read.All`
-
-Tenant-specific consent and RBAC may require additional permissions.
+```
+User.ReadWrite.All
+Directory.ReadWrite.All
+Organization.Read.All
+RoleManagement.Read.Directory
+Application.Read.All
+AppRoleAssignment.Read.All
+DelegatedPermissionGrant.Read.All
+```
 
 ## Quick Start
 
-### Validation-Only Mode
+### Validation-Only Mode (no mutations)
 
 ```powershell
 pwsh ./src/Start-Decom.ps1 `
@@ -131,7 +146,7 @@ pwsh ./src/Start-Decom.ps1 `
 
 Each run creates a unique output directory:
 
-```text
+```
 output/<RunId>/
   run.log
   evidence.ndjson
@@ -144,16 +159,16 @@ output/<RunId>/
 1. Authentication
 2. Preflight validation
 3. Pre-action identity snapshot
-4. Containment
-5. Mailbox continuity
-6. Compliance controls
+4. Containment (password reset, session revoke, sign-in block)
+5. Mailbox continuity (convert to shared, auto-reply)
+6. Compliance controls (litigation hold, compliance state)
 7. License readiness and optional removal
 8. Post-action identity snapshot
 9. Reporting
 
 ## Repository Layout
 
-```text
+```
 src/
   Start-Decom.ps1
   Invoke-DecomWorkflow.ps1
@@ -174,15 +189,12 @@ src/
     Validation.psm1
 
 docs/
-  architecture.md
   compliance-model.md
   evidence-model.md
-  permissions.md
-  production-runbook.md
-  validation-guide.md
+  runbook.md
 
 tests/
-  Decom.Tests.ps1
+  Decom.Tests.ps1  (54 tests, all passing)
 
 examples/
   sample-report.schema.json
@@ -190,7 +202,7 @@ examples/
 
 ## GitHub Topics
 
-`entra-id`, `microsoft-365`, `identity-governance`, `zero-trust`, `iam`, `powershell`, `microsoft-graph`, `exchange-online`, `audit`, `security-architecture`
+`entra-id` `microsoft-365` `identity-governance` `zero-trust` `iam` `powershell` `microsoft-graph` `exchange-online` `audit` `security-architecture`
 
 ## Safety Notice
 
