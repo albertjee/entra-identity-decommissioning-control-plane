@@ -11,7 +11,7 @@ function Invoke-DecomWorkflow {
         [string]$OutOfOfficeMessage,
         [switch]$EnableLitigationHold,
         [switch]$RemoveLicenses,
-        [Parameter(Mandatory)][System.Management.Automation.PSCmdlet]$Cmdlet
+        $Cmdlet  # PSCmdlet in production; pscustomobject stub acceptable in test
     )
 
     $Results = New-Object System.Collections.Generic.List[object]
