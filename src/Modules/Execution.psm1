@@ -1,0 +1,4 @@
+function Invoke-DecomPhase { param([pscustomobject]$State,[string]$Phase,[scriptblock]$ScriptBlock) Set-DecomPhaseState -State $State -Phase $Phase -Status 'InProgress'; try { & $ScriptBlock; Set-DecomPhaseState -State $State -Phase $Phase -Status 'Completed' } catch { Set-DecomPhaseState -State $State -Phase $Phase -Status 'Failed'; throw } }
+function Invoke-DecomGraphCall { param([scriptblock]$ScriptBlock,[string]$OperationName) try { & $ScriptBlock } catch { throw "Graph operation failed [$OperationName]: $($_.Exception.Message)" } }
+function Invoke-DecomExchangeCall { param([scriptblock]$ScriptBlock,[string]$OperationName) try { & $ScriptBlock } catch { throw "Exchange operation failed [$OperationName]: $($_.Exception.Message)" } }
+Export-ModuleMember -Function Invoke-DecomPhase,Invoke-DecomGraphCall,Invoke-DecomExchangeCall
