@@ -146,7 +146,7 @@ function Set-DecomMailForwarding {
             $setParams['ForwardingSmtpAddress'] = $null   # clear SMTP if setting internal
         }
 
-        Set-Mailbox @setParams -ErrorAction Stop
+        _InvokeSetMailboxWithRetry -Params $setParams
 
         $after = Get-DecomMailForwardingState -Context $Context
 
@@ -235,11 +235,12 @@ function Remove-DecomMailForwarding {
                 -RiskMitigated 'Continued mail flow to unauthorised recipient'
         }
 
-        Set-Mailbox -Identity $Context.TargetUPN `
-            -ForwardingSmtpAddress     $null `
-            -ForwardingAddress         $null `
-            -DeliverToMailboxAndForward $false `
-            -ErrorAction Stop
+        _InvokeSetMailboxWithRetry -Params @{
+            Identity                    = $Context.TargetUPN
+            ForwardingSmtpAddress       = $null
+            ForwardingAddress           = $null
+            DeliverToMailboxAndForward  = $false
+        }
 
         Add-DecomEvidenceEvent -Context $Context -Phase $phase `
             -ActionName $actionName -Status 'Success' -IsCritical $false `
@@ -264,6 +265,37 @@ function Remove-DecomMailForwarding {
             -FailureClass 'ExchangeError' `
             -ControlObjective 'Clear mail forwarding to prevent data leakage' `
             -RiskMitigated 'Continued mail flow to unauthorised recipient'
+    }
+}
+
+function _InvokeSetMailboxWithRetry {
+    # Wraps Set-Mailbox with a retry loop to handle EXO replication lag after
+    # Entra ID session termination. Exchange Online may not have synced the
+    # identity state yet, causing transient ManagementObjectNotFoundException
+    # or WriteErrorException on the first attempt.
+    param(
+        [hashtable]$Params,
+        [int]$MaxAttempts = 3,
+        [int]$DelaySeconds = 15
+    )
+    $attempt = 0
+    while ($attempt -lt $MaxAttempts) {
+        $attempt++
+        try {
+            Set-Mailbox @Params -ErrorAction Stop
+            return
+        } catch {
+            $msg = $_.Exception.Message
+            $isTransient = ($msg -match 'ManagementObjectNotFoundException' -or
+                            $msg -match 'WriteErrorException' -or
+                            $msg -match 'temporarily unavailable' -or
+                            $msg -match 'couldn''t be found')
+            if ($isTransient -and $attempt -lt $MaxAttempts) {
+                Start-Sleep -Seconds $DelaySeconds
+            } else {
+                throw
+            }
+        }
     }
 }
 

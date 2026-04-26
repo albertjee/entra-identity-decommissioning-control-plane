@@ -340,7 +340,7 @@ function Remove-DecomAuthMethods {
     try {
         $user    = Get-MgUser -UserId $Context.TargetUPN -Property Id -ErrorAction Stop
         $uid     = $user.Id
-        $methods = @(Get-MgUserAuthenticationMethod -UserId $uid -ErrorAction Stop)
+        $methods = @(Get-MgUserAuthenticationMethod -UserId $uid -All -ErrorAction Stop)
 
         if ($methods.Count -eq 0) {
             return New-DecomActionResult -ActionName $actionName -Phase $phase `
