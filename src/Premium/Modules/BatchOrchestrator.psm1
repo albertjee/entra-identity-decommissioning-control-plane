@@ -150,7 +150,7 @@ function Invoke-DecomBatch {
 
         # ── Run Lite workflow ─────────────────────────────────────────────────
         try {
-            $result = Invoke-DecomWorkflow `
+            $result = _InvokeDecomWorkflow `
                 -Context             $ctx `
                 -State               $state `
                 -OutOfOfficeMessage  $OutOfOfficeMessage `
@@ -160,7 +160,7 @@ function Invoke-DecomBatch {
 
             # ── Access removal (Phase 3) ──────────────────────────────────
             if (-not $SkipGroups -and -not $SkipRoles -and -not $SkipAuthMethods) {
-                $accessResults = Invoke-DecomAccessRemoval `
+                $accessResults = _InvokeDecomAccessRemoval `
                     -Context $ctx `
                     -Cmdlet  $Cmdlet `
                     -SkipGroups:      $SkipGroups `
@@ -225,6 +225,46 @@ function Invoke-DecomBatch {
 }
 
 # ── Private helpers ────────────────────────────────────────────────────────────
+
+function _InvokeDecomWorkflow {
+    # Thin private wrapper around the Lite Invoke-DecomWorkflow.
+    # Keeping the call inside this module's scope means Pester can intercept it
+    # with Mock -ModuleName BatchOrchestrator -CommandName _InvokeDecomWorkflow
+    # without requiring the Lite module to be loaded during unit tests.
+    param(
+        [pscustomobject]$Context,
+        [pscustomobject]$State,
+        [string]$OutOfOfficeMessage,
+        [switch]$EnableLitigationHold,
+        [switch]$RemoveLicenses,
+        $Cmdlet
+    )
+    Invoke-DecomWorkflow `
+        -Context              $Context `
+        -State                $State `
+        -OutOfOfficeMessage   $OutOfOfficeMessage `
+        -EnableLitigationHold:$EnableLitigationHold `
+        -RemoveLicenses:      $RemoveLicenses `
+        -Cmdlet               $Cmdlet
+}
+
+function _InvokeDecomAccessRemoval {
+    # Thin private wrapper around the Premium Invoke-DecomAccessRemoval.
+    # Same mock-seam pattern as _InvokeDecomWorkflow above.
+    param(
+        [pscustomobject]$Context,
+        $Cmdlet,
+        [switch]$SkipGroups,
+        [switch]$SkipRoles,
+        [switch]$SkipAuthMethods
+    )
+    Invoke-DecomAccessRemoval `
+        -Context         $Context `
+        -Cmdlet          $Cmdlet `
+        -SkipGroups:     $SkipGroups `
+        -SkipRoles:      $SkipRoles `
+        -SkipAuthMethods:$SkipAuthMethods
+}
 
 function _SanitiseUPNForPath {
     # Replace filesystem-unsafe chars in a UPN to produce a safe dir name.

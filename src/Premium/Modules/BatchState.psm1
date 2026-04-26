@@ -160,22 +160,20 @@ function Restore-DecomBatchState {
         }
     }
 
-    $batch = [pscustomobject]@{
-        BatchId          = $data.BatchId
-        TicketId         = $data.TicketId
-        CreatedUtc       = $data.CreatedUtc
-        OutputRoot       = $data.OutputRoot
-        EvidenceLevel    = $data.EvidenceLevel
-        WhatIf           = [bool]$data.WhatIf
-        NonInteractive   = [bool]$data.NonInteractive
-        Force            = [bool]$data.Force
-        OperatorUPN      = $data.OperatorUPN
-        OperatorObjectId = $data.OperatorObjectId
-        MaxParallel      = [int]$data.MaxParallel
-        Entries          = $null
-    }
-    # Use Add-Member to preserve [ordered] type in PS7
-    $batch | Add-Member -Force -NotePropertyName Entries -NotePropertyValue $entries
+    # PS7-safe: New-Object + Add-Member preserves all property types
+    $batch = New-Object -TypeName PSObject
+    $batch | Add-Member -NotePropertyName BatchId          -NotePropertyValue $data.BatchId
+    $batch | Add-Member -NotePropertyName TicketId         -NotePropertyValue $data.TicketId
+    $batch | Add-Member -NotePropertyName CreatedUtc       -NotePropertyValue $data.CreatedUtc
+    $batch | Add-Member -NotePropertyName OutputRoot       -NotePropertyValue $data.OutputRoot
+    $batch | Add-Member -NotePropertyName EvidenceLevel    -NotePropertyValue $data.EvidenceLevel
+    $batch | Add-Member -NotePropertyName WhatIf           -NotePropertyValue ([bool]$data.WhatIf)
+    $batch | Add-Member -NotePropertyName NonInteractive   -NotePropertyValue ([bool]$data.NonInteractive)
+    $batch | Add-Member -NotePropertyName Force            -NotePropertyValue ([bool]$data.Force)
+    $batch | Add-Member -NotePropertyName OperatorUPN      -NotePropertyValue $data.OperatorUPN
+    $batch | Add-Member -NotePropertyName OperatorObjectId -NotePropertyValue $data.OperatorObjectId
+    $batch | Add-Member -NotePropertyName MaxParallel      -NotePropertyValue ([int]$data.MaxParallel)
+    $batch | Add-Member -NotePropertyName Entries          -NotePropertyValue $entries
 
     return $batch
 }

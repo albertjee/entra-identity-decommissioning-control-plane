@@ -68,9 +68,12 @@ function Invoke-DecomBatchApproval {
         [string]$ApproverUPN
     )
 
-    $batchDir    = Join-Path $Batch.OutputRoot $Batch.BatchId
+    $batchId     = $Batch.BatchId
+    $outputRoot  = $Batch.OutputRoot
+    $operatorUpn = $Batch.OperatorUPN
+    $batchDir    = Join-Path $outputRoot $batchId
     $null        = New-Item -ItemType Directory -Path $batchDir -Force
-    $approver    = if ($ApproverUPN) { $ApproverUPN } else { $Batch.OperatorUPN }
+    $approver    = if ($ApproverUPN) { $ApproverUPN } else { $operatorUpn }
 
     if ($NonInteractive) {
         # ── Pre-signed approval path ──────────────────────────────────────────
@@ -160,15 +163,19 @@ function New-DecomApprovalRecord {
     }
     $null = New-Item -ItemType Directory -Path $dir -Force
 
+    $batchId   = $Batch.BatchId
+    $ticketId  = $Batch.TicketId
+    $upnCount  = try { @($Batch.Entries.Keys).Count } catch { 0 }
+
     $record = [ordered]@{
         SchemaVersion = '2.1'
         RecordType    = 'PreSignedApproval'
-        BatchId       = $Batch.BatchId
-        TicketId      = $Batch.TicketId
+        BatchId       = $batchId
+        TicketId      = $ticketId
         ApproverUPN   = $ApproverUPN
         Approved      = $true
         ApprovedUtc   = (Get-Date).ToUniversalTime().ToString('o')
-        UPNCount      = $Batch.Entries.Count
+        UPNCount      = $upnCount
         Note          = 'Pre-signed approval for NonInteractive batch execution.'
     }
 
@@ -194,7 +201,7 @@ function Get-DecomApprovalStatus {
         [Parameter(Mandatory)][pscustomobject]$Batch
     )
 
-    $path = Join-Path (Join-Path $Batch.OutputRoot $Batch.BatchId) 'batch-approval.json'
+    $path = Join-Path (Join-Path $Batch.OutputRoot $Batch.BatchId) 'batch-approval.json' 
     if (-not (Test-Path $path)) { return $null }
 
     return Get-Content $path -Raw -Encoding UTF8 | ConvertFrom-Json

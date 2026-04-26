@@ -396,6 +396,31 @@ Describe 'BatchOrchestrator — Invoke-DecomBatch' {
     BeforeAll {
         $script:tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ('DecomBatchOrcTest-' + [guid]::NewGuid().Guid)
         $null = New-Item -ItemType Directory -Path $script:tmpDir -Force
+
+        # Default success stub — mocked on the private wrapper inside the module
+        # so PowerShell's module scope resolution finds it during Invoke-DecomBatch.
+        Mock -ModuleName BatchOrchestrator _InvokeDecomWorkflow {
+            param($Context, $State, $OutOfOfficeMessage, $EnableLitigationHold, $RemoveLicenses, $Cmdlet)
+            [pscustomobject]@{
+                Context    = $Context
+                State      = $State
+                Results    = [System.Collections.Generic.List[object]]::new()
+                StopReason = $null
+                Summary    = [pscustomobject]@{
+                    TargetUPN     = $Context.TargetUPN
+                    RunId         = $State.RunId
+                    CorrelationId = $Context.CorrelationId
+                    OperatorUPN   = $Context.OperatorUPN
+                    TicketId      = $Context.TicketId
+                    Status        = 'Completed'
+                    Version       = 'v2.0-Premium'
+                    EvidenceLevel = $Context.EvidenceLevel
+                    Sealed        = $Context.SealEvidence
+                }
+            }
+        }
+
+        Mock -ModuleName BatchOrchestrator _InvokeDecomAccessRemoval { @() }
     }
 
     AfterAll {
@@ -432,8 +457,8 @@ Describe 'BatchOrchestrator — Invoke-DecomBatch' {
             -UpnList @('done@c.com','todo@c.com') -Force -NonInteractive
         Set-DecomBatchEntryStatus -Batch $b -UPN 'done@c.com' -Status 'Completed'
         $r = Invoke-DecomBatch -Batch $b -Cmdlet $null
-        $r.Results.Count | Should -Be 1   # only 'todo@c.com' ran
-        $r.Summary.Completed | Should -Be 2  # both show as Completed in summary
+        $r.Results.Count     | Should -Be 1   # only 'todo@c.com' ran
+        $r.Summary.Completed | Should -Be 2   # both show as Completed in summary
     }
 
     It 'skips Skipped entries on re-run' {
@@ -453,17 +478,16 @@ Describe 'BatchOrchestrator — Invoke-DecomBatch' {
     }
 
     It 'handles workflow exceptions — marks entry Failed, continues batch' {
-        # Override Invoke-DecomWorkflow to throw for a specific UPN
-        function Invoke-DecomWorkflow {
-            param([pscustomobject]$Context, [pscustomobject]$State,
-                  [string]$OutOfOfficeMessage, [switch]$EnableLitigationHold,
-                  [switch]$RemoveLicenses, $Cmdlet)
-            if ($Context.TargetUPN -eq 'bad@c.com') {
-                throw 'Simulated Graph failure'
-            }
+        # Override the default success mock with a conditional throw for bad@c.com only.
+        Mock -ModuleName BatchOrchestrator _InvokeDecomWorkflow {
+            param($Context, $State, $OutOfOfficeMessage, $EnableLitigationHold, $RemoveLicenses, $Cmdlet)
+            if ($Context.TargetUPN -eq 'bad@c.com') { throw 'Simulated Graph failure' }
             [pscustomobject]@{
-                Context = $Context; State = $State; Results = @(); StopReason = $null
-                Summary = [pscustomobject]@{
+                Context    = $Context
+                State      = $State
+                Results    = [System.Collections.Generic.List[object]]::new()
+                StopReason = $null
+                Summary    = [pscustomobject]@{
                     TargetUPN = $Context.TargetUPN; RunId = $State.RunId
                     CorrelationId = $Context.CorrelationId; Status = 'Completed'
                     Version = 'v2.0-Premium'; EvidenceLevel = $Context.EvidenceLevel
@@ -482,10 +506,27 @@ Describe 'BatchOrchestrator — Invoke-DecomBatch' {
         $r.Errors[0].UPN                | Should -Be 'bad@c.com'
         $r.Summary.Failed               | Should -Be 1
         $r.Summary.Completed            | Should -Be 1
+
+        # Restore default success mock for subsequent tests in this Describe
+        Mock -ModuleName BatchOrchestrator _InvokeDecomWorkflow {
+            param($Context, $State, $OutOfOfficeMessage, $EnableLitigationHold, $RemoveLicenses, $Cmdlet)
+            [pscustomobject]@{
+                Context    = $Context; State = $State
+                Results    = [System.Collections.Generic.List[object]]::new()
+                StopReason = $null
+                Summary    = [pscustomobject]@{
+                    TargetUPN = $Context.TargetUPN; RunId = $State.RunId
+                    CorrelationId = $Context.CorrelationId; Status = 'Completed'
+                    Version = 'v2.0-Premium'; EvidenceLevel = $Context.EvidenceLevel
+                    Sealed = $Context.SealEvidence; OperatorUPN = $Context.OperatorUPN
+                    TicketId = $Context.TicketId
+                }
+            }
+        }
     }
 
     It 'checkpoints state file to disk after each UPN' {
-        $b        = New-DecomBatchContext -OutputRoot $script:tmpDir -UpnList @('ckpt@c.com') -Force -NonInteractive
+        $b         = New-DecomBatchContext -OutputRoot $script:tmpDir -UpnList @('ckpt@c.com') -Force -NonInteractive
         $statePath = Get-DecomBatchStatePath -Batch $b
         Invoke-DecomBatch -Batch $b -Cmdlet $null | Out-Null
         Test-Path $statePath | Should -BeTrue
@@ -495,8 +536,8 @@ Describe 'BatchOrchestrator — Invoke-DecomBatch' {
         $b = New-DecomBatchContext -OutputRoot $script:tmpDir -UpnList @('f@c.com') -Force -NonInteractive
         Set-DecomBatchEntryStatus -Batch $b -UPN 'f@c.com' -Status 'Failed'
         $r = Invoke-DecomBatch -Batch $b -SkipFailed -Cmdlet $null
-        $r.Results.Count           | Should -Be 0
-        $b.Entries['f@c.com'].Status | Should -Be 'Failed'  # unchanged
+        $r.Results.Count             | Should -Be 0
+        $b.Entries['f@c.com'].Status | Should -Be 'Failed'
     }
 
     It 'creates per-UPN output directory' {
@@ -525,6 +566,24 @@ Describe 'Resume flow — end-to-end' {
     BeforeAll {
         $script:tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ('DecomResumeTest-' + [guid]::NewGuid().Guid)
         $null = New-Item -ItemType Directory -Path $script:tmpDir -Force
+
+        Mock -ModuleName BatchOrchestrator _InvokeDecomWorkflow {
+            param($Context, $State, $OutOfOfficeMessage, $EnableLitigationHold, $RemoveLicenses, $Cmdlet)
+            [pscustomobject]@{
+                Context    = $Context; State = $State
+                Results    = [System.Collections.Generic.List[object]]::new()
+                StopReason = $null
+                Summary    = [pscustomobject]@{
+                    TargetUPN = $Context.TargetUPN; RunId = $State.RunId
+                    CorrelationId = $Context.CorrelationId; Status = 'Completed'
+                    Version = 'v2.0-Premium'; EvidenceLevel = $Context.EvidenceLevel
+                    Sealed = $Context.SealEvidence; OperatorUPN = $Context.OperatorUPN
+                    TicketId = $Context.TicketId
+                }
+            }
+        }
+
+        Mock -ModuleName BatchOrchestrator _InvokeDecomAccessRemoval { @() }
     }
 
     AfterAll {
@@ -534,21 +593,18 @@ Describe 'Resume flow — end-to-end' {
     }
 
     It 'resume skips completed entries and runs only remaining' {
-        # Simulate partial run: 2 UPNs, first completed, second pending
         $b = New-DecomBatchContext -OutputRoot $script:tmpDir `
             -UpnList @('done@c.com','pending@c.com') -Force -NonInteractive -TicketId 'CHG-RESUME'
         Set-DecomBatchEntryStatus -Batch $b -UPN 'done@c.com' -Status 'Completed' -RunId 'old-run-id'
         $statePath = Save-DecomBatchState -Batch $b
 
-        # Restore and resume
         $restored = Restore-DecomBatchState -StatePath $statePath
         $r = Invoke-DecomBatch -Batch $restored -Cmdlet $null
 
-        # Only pending@c.com should have run
-        $r.Results.Count                        | Should -Be 1
-        $restored.Entries['done@c.com'].Status   | Should -Be 'Completed'
-        $restored.Entries['pending@c.com'].Status| Should -Be 'Completed'
-        $restored.Entries['done@c.com'].RunId    | Should -Be 'old-run-id'   # preserved
+        $r.Results.Count                         | Should -Be 1
+        $restored.Entries['done@c.com'].Status    | Should -Be 'Completed'
+        $restored.Entries['pending@c.com'].Status | Should -Be 'Completed'
+        $restored.Entries['done@c.com'].RunId     | Should -Be 'old-run-id'
     }
 
     It 'restored batch preserves TicketId through save/restore cycle' {
@@ -556,5 +612,14 @@ Describe 'Resume flow — end-to-end' {
         $path = Save-DecomBatchState -Batch $b
         $r    = Restore-DecomBatchState -StatePath $path
         $r.TicketId | Should -Be 'CHG-TICKET'
+    }
+
+    It 'restored batch preserves entry statuses' {
+        $b = New-DecomBatchContext -OutputRoot $script:tmpDir -UpnList @('a@c.com','b@c.com') -Force -NonInteractive
+        Set-DecomBatchEntryStatus -Batch $b -UPN 'a@c.com' -Status 'Completed'
+        $path = Save-DecomBatchState -Batch $b
+        $r    = Restore-DecomBatchState -StatePath $path
+        $r.Entries['a@c.com'].Status | Should -Be 'Completed'
+        $r.Entries['b@c.com'].Status | Should -Be 'Pending'
     }
 }
