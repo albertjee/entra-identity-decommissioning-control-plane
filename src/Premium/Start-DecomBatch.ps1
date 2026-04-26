@@ -1,4 +1,4 @@
-# Start-DecomBatch.ps1 — Premium v2.0 batch launcher
+# Start-DecomBatch.ps1 — Premium v2.1 batch launcher
 # Orchestrates multi-UPN decommissioning runs via the batch engine.
 #
 # Usage — new batch:
@@ -15,9 +15,9 @@
 #   <RepoRoot>\output\<BatchId>\<sanitised-upn>\report.html
 #   <RepoRoot>\output\<BatchId>\batch-state.json
 #
-# PS5.1 compatible — no 3-arg Join-Path, no PS7+ APIs.
+# PS7 compatible (v2.1). Parallel execution requires PS7.
 
-#Requires -Version 5.1
+#Requires -Version 7.0
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High', DefaultParameterSetName = 'New')]
 param(
@@ -61,6 +61,21 @@ param(
     [Parameter(ParameterSetName = 'New')]
     [switch]$SkipAuthMethods,
 
+    [Parameter(ParameterSetName = 'New')]
+    [string]$PolicyPath,
+
+    [Parameter(ParameterSetName = 'New')]
+    [Parameter(ParameterSetName = 'Resume')]
+    [string]$ApprovalPath,
+
+    [Parameter(ParameterSetName = 'New')]
+    [Parameter(ParameterSetName = 'Resume')]
+    [switch]$RequireApproval,
+
+    [Parameter(ParameterSetName = 'New')]
+    [Parameter(ParameterSetName = 'Resume')]
+    [switch]$Parallel,
+
     # ── Resume params ──────────────────────────────────────────────────────────
     [Parameter(ParameterSetName = 'Resume', Mandatory)]
     [ValidateScript({ Test-Path $_ })]
@@ -96,7 +111,7 @@ foreach ($mod in $liteModuleOrder) {
 . $LiteWorkflow
 
 # ── Import Premium modules ────────────────────────────────────────────────────
-$premiumModuleOrder = @('BatchContext','BatchState','BatchOrchestrator','BatchReporting','AccessRemoval')
+$premiumModuleOrder = @('BatchContext','BatchState','BatchOrchestrator','BatchReporting','AccessRemoval','BatchDiff','BatchPolicy','BatchApproval','MailboxExtended','BatchOrchestratorParallel')
 foreach ($mod in $premiumModuleOrder) {
     Import-Module (Join-Path $PremiumMods "$mod.psm1") -Force -DisableNameChecking
 }
@@ -106,7 +121,7 @@ $null = New-Item -ItemType Directory -Path $OutputBase -Force
 
 # ── Build or restore batch envelope ──────────────────────────────────────────
 if ($PSCmdlet.ParameterSetName -eq 'Resume') {
-    Write-Host "Entra Identity Decommissioning Control Plane — Premium v2.0" -ForegroundColor Cyan
+    Write-Host "Entra Identity Decommissioning Control Plane — Premium v2.1" -ForegroundColor Cyan
     Write-Host "Mode: RESUME" -ForegroundColor Yellow
     Write-Host "State file: $ResumePath" -ForegroundColor Yellow
 
@@ -138,7 +153,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Resume') {
         -Force:          $Force
 
     $StatePath = Get-DecomBatchStatePath -Batch $Batch
-    Write-Host "Entra Identity Decommissioning Control Plane — Premium v2.0" -ForegroundColor Cyan
+    Write-Host "Entra Identity Decommissioning Control Plane — Premium v2.1" -ForegroundColor Cyan
     Write-Host ("Batch: {0} | UPNs: {1} | Ticket: {2} | Mode: {3}" -f `
         $Batch.BatchId, `
         $Batch.Entries.Count, `
@@ -151,17 +166,46 @@ if ($PSCmdlet.ParameterSetName -eq 'Resume') {
     Write-Host "State file: $StatePath" -ForegroundColor DarkGray
 }
 
+# ── Load policy file if supplied ─────────────────────────────────────────────
+$Policy = $null
+if ($PolicyPath) {
+    $Policy = Read-DecomBatchPolicy -Path $PolicyPath
+    Write-Host "Policy file loaded: $PolicyPath" -ForegroundColor DarkGray
+}
+
+# ── Approval gate ─────────────────────────────────────────────────────────────
+if ($RequireApproval) {
+    Invoke-DecomBatchApproval `
+        -Batch           $Batch `
+        -NonInteractive: $NonInteractive `
+        -ApprovalPath    $ApprovalPath | Out-Null
+}
+
 # ── Run the batch ─────────────────────────────────────────────────────────────
 try {
-    $BatchResult = Invoke-DecomBatch `
-        -Batch               $Batch `
-        -OutOfOfficeMessage  $OutOfOfficeMessage `
-        -RemoveLicenses:     $RemoveLicenses `
-        -SkipGroups:         $SkipGroups `
-        -SkipRoles:          $SkipRoles `
-        -SkipAuthMethods:    $SkipAuthMethods `
-        -SkipFailed:         $SkipFailed `
-        -Cmdlet              $PSCmdlet
+    if ($Parallel -and $Batch.MaxParallel -gt 1) {
+        $BatchResult = Invoke-DecomBatchParallel `
+            -Batch              $Batch `
+            -LiteModulesPath    $LiteModules `
+            -PremiumModulesPath $PremiumMods `
+            -LiteWorkflowPath   $LiteWorkflow `
+            -OutOfOfficeMessage $OutOfOfficeMessage `
+            -RemoveLicenses:    $RemoveLicenses `
+            -SkipGroups:        $SkipGroups `
+            -SkipRoles:         $SkipRoles `
+            -SkipAuthMethods:   $SkipAuthMethods `
+            -SkipFailed:        $SkipFailed
+    } else {
+        $BatchResult = Invoke-DecomBatch `
+            -Batch               $Batch `
+            -OutOfOfficeMessage  $OutOfOfficeMessage `
+            -RemoveLicenses:     $RemoveLicenses `
+            -SkipGroups:         $SkipGroups `
+            -SkipRoles:          $SkipRoles `
+            -SkipAuthMethods:    $SkipAuthMethods `
+            -SkipFailed:         $SkipFailed `
+            -Cmdlet              $PSCmdlet
+    }
 
     # ── Resolve operator identity post-auth (same pattern as Lite) ────────────
     try {
@@ -181,6 +225,9 @@ try {
     $HtmlReportPath   = Export-DecomBatchHtmlReport      -Batch $Batch -BatchResult $BatchResult
     $EvidManifestPath = Write-DecomBatchEvidenceManifest -Batch $Batch
 
+    # ── Diff report (always written — most useful in WhatIf mode) ─────────────
+    $DiffPaths = Export-DecomBatchDiffReport -Batch $Batch -BatchResult $BatchResult
+
     # ── Summary output ────────────────────────────────────────────────────────
     $s = $BatchResult.Summary
     Write-Host '' 
@@ -193,6 +240,8 @@ try {
     Write-Host ("  HTML    : {0}"    -f $HtmlReportPath)   -ForegroundColor DarkGray
     Write-Host ("  JSON    : {0}"    -f $JsonReportPath)   -ForegroundColor DarkGray
     Write-Host ("  Manifest: {0}"    -f $EvidManifestPath) -ForegroundColor DarkGray
+    Write-Host ("  Diff HTML: {0}"   -f $DiffPaths.HtmlPath) -ForegroundColor DarkGray
+    Write-Host ("  Diff JSON: {0}"   -f $DiffPaths.JsonPath) -ForegroundColor DarkGray
 
     if ($BatchResult.Errors.Count -gt 0) {
         Write-Host ''
