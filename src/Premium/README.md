@@ -32,14 +32,19 @@ src/
       BatchContext.psm1         # batch envelope, per-UPN entry management
       BatchState.psm1           # JSON checkpoint: save / restore
       BatchOrchestrator.psm1    # Invoke-DecomBatch: sequential orchestrator
+      BatchReporting.psm1       # HTML/JSON batch reports + evidence manifest
 
 tests/
   Premium/
-    DecomBatch.Tests.ps1        # Pester v5 suite — 30+ tests across all modules
+    DecomBatch.Tests.ps1              # Pester v5 suite — 51 tests, Phase 1 modules
+    DecomBatchReporting.Tests.ps1     # Pester v5 suite — 35 tests, BatchReporting
 
 output/
   <BatchId>/
     batch-state.json            # checkpoint file (resume anchor)
+    batch-report.html           # human-readable batch summary (print-ready)
+    batch-report.json           # machine-readable batch roll-up
+    batch-evidence.manifest.json # cross-UPN evidence integrity index
     <sanitised-upn>/
       run.log                   # Lite log
       evidence.ndjson           # Lite hash-chained evidence
@@ -160,6 +165,7 @@ connectivity needed.
 | Phase | Status | Description |
 |---|---|---|
 | 1 | Complete | Batch engine, per-UPN lifecycle, resume, state persistence |
+| 2 | Complete | Batch reporting — HTML/JSON roll-up, cross-UPN evidence manifest |
 | 2 | Planned | Batch-level reporting, cross-UPN evidence manifest, mail forwarding control |
 | 3 | Planned | Policy overlays, group/role removal automation, MFA method removal |
 | 4 | Reserved | Parallel execution (MaxParallel — PS5.1 runspace pool) |

@@ -87,7 +87,7 @@ foreach ($mod in $liteModuleOrder) {
 . $LiteWorkflow
 
 # ── Import Premium modules ────────────────────────────────────────────────────
-$premiumModuleOrder = @('BatchContext','BatchState','BatchOrchestrator')
+$premiumModuleOrder = @('BatchContext','BatchState','BatchOrchestrator','BatchReporting')
 foreach ($mod in $premiumModuleOrder) {
     Import-Module (Join-Path $PremiumMods "$mod.psm1") -Force -DisableNameChecking
 }
@@ -164,6 +164,11 @@ try {
     # ── Final checkpoint with operator identity resolved ──────────────────────
     Save-DecomBatchState -Batch $Batch | Out-Null
 
+    # ── Batch reports ────────────────────────────────────────────────
+    $JsonReportPath   = Export-DecomBatchJsonReport      -Batch $Batch -BatchResult $BatchResult
+    $HtmlReportPath   = Export-DecomBatchHtmlReport      -Batch $Batch -BatchResult $BatchResult
+    $EvidManifestPath = Write-DecomBatchEvidenceManifest -Batch $Batch
+
     # ── Summary output ────────────────────────────────────────────────────────
     $s = $BatchResult.Summary
     Write-Host '' 
@@ -173,6 +178,9 @@ try {
     Write-Host ("  Failed  : {0}"    -f $s.Failed)     -ForegroundColor $(if ($s.AnyFailed) { 'Red' } else { 'White' })
     Write-Host ("  Skipped : {0}"    -f $s.Skipped)    -ForegroundColor DarkGray
     Write-Host ("  Output  : {0}"    -f (Join-Path $OutputBase $Batch.BatchId)) -ForegroundColor DarkGray
+    Write-Host ("  HTML    : {0}"    -f $HtmlReportPath)   -ForegroundColor DarkGray
+    Write-Host ("  JSON    : {0}"    -f $JsonReportPath)   -ForegroundColor DarkGray
+    Write-Host ("  Manifest: {0}"    -f $EvidManifestPath) -ForegroundColor DarkGray
 
     if ($BatchResult.Errors.Count -gt 0) {
         Write-Host ''
