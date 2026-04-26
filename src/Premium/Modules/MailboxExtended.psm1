@@ -41,8 +41,7 @@ function Get-DecomMailForwardingState {
 
     try {
         $mbx = Get-EXOMailbox -Identity $Context.TargetUPN `
-            -Properties ForwardingSmtpAddress, ForwardingAddress,
-                        DeliverToMailboxAndForward, RecipientTypeDetails `
+            -Property ForwardingSmtpAddress, ForwardingAddress, DeliverToMailboxAndForward, RecipientTypeDetails `
             -ErrorAction Stop
 
         return [pscustomobject]@{

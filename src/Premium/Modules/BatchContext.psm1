@@ -119,8 +119,10 @@ function New-DecomBatchContext {
         OperatorUPN      = $OperatorUPN
         OperatorObjectId = $OperatorObjectId
         MaxParallel      = $MaxParallel
-        Entries          = [ordered]@{}
+        Entries          = $null
     }
+    # Add-Member ensures [ordered] type is preserved in PS7 across module boundaries
+    $batch | Add-Member -Force -NotePropertyName Entries -NotePropertyValue ([ordered]@{})
 
     foreach ($upn in $UpnList) {
         if ($upn -and $upn.Trim()) {

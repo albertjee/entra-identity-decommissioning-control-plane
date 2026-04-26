@@ -9,9 +9,9 @@ BeforeAll {
     $premiumMods = Join-Path $repoRoot 'src\Premium\Modules'
 
     # Load Phase 1 modules (BatchReporting depends on BatchContext)
-    Import-Module (Join-Path $premiumMods 'BatchContext.psm1')   -Force -DisableNameChecking
     Import-Module (Join-Path $premiumMods 'BatchState.psm1')     -Force -DisableNameChecking
     Import-Module (Join-Path $premiumMods 'BatchReporting.psm1') -Force -DisableNameChecking
+    Import-Module (Join-Path $premiumMods 'BatchContext.psm1')   -Force -DisableNameChecking
 
     # ── Shared test helpers ────────────────────────────────────────────────────
     function New-TestBatchResult {

@@ -94,7 +94,7 @@ function Read-DecomBatchPolicy {
 
     # Validate structure
     $issues = Test-DecomPolicyCompliance -Policy $policy
-    if ($issues.Count -gt 0) {
+    if (@($issues).Count -gt 0) {
         throw "Read-DecomBatchPolicy: policy validation failed:`n  $($issues -join "`n  ")"
     }
 
@@ -196,7 +196,7 @@ function Test-DecomPolicyCompliance {
 
     if (-not $Policy.DefaultPolicy) {
         $errors.Add("Missing required 'DefaultPolicy' section.")
-        return $errors.ToArray()
+        return @($errors)
     }
 
     # Validate DefaultPolicy fields
@@ -211,7 +211,7 @@ function Test-DecomPolicyCompliance {
         }
     }
 
-    return $errors.ToArray()
+    return @($errors)
 }
 
 function New-DecomBatchPolicyTemplate {

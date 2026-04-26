@@ -86,9 +86,9 @@ BeforeAll {
     }
 
     # ── Load Premium modules ───────────────────────────────────────────────────
-    Import-Module (Join-Path $premiumMods 'BatchContext.psm1')     -Force -DisableNameChecking
     Import-Module (Join-Path $premiumMods 'BatchState.psm1')       -Force -DisableNameChecking
     Import-Module (Join-Path $premiumMods 'BatchOrchestrator.psm1')-Force -DisableNameChecking
+    Import-Module (Join-Path $premiumMods 'BatchContext.psm1')     -Force -DisableNameChecking
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -320,7 +320,7 @@ Describe 'BatchState — Save and Restore' {
         $b    = New-DecomBatchContext -OutputRoot $script:tmpDir -UpnList @()
         $path = Get-DecomBatchStatePath -Batch $b
         $path | Should -Match 'batch-state\.json$'
-        $path | Should -Match [regex]::Escape($b.BatchId)
+        $path | Should -BeLike "*$($b.BatchId)*"
     }
 
     It 'Save-DecomBatchState creates the file' {

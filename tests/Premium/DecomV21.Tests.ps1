@@ -24,8 +24,9 @@ BeforeAll {
     }
 
     # EXO stubs for MailboxExtended
-    function Get-EXOMailbox {
-        param([string]$Identity,[string[]]$Properties,[string]$ErrorAction)
+    # EXO stubs must be Global scope so they intercept module-level calls in PS7
+    function Global:Get-EXOMailbox {
+        param([string]$Identity,[string[]]$Property,[string]$ErrorAction)
         [pscustomobject]@{
             ForwardingSmtpAddress      = 'manager@contoso.com'
             ForwardingAddress          = $null
@@ -33,17 +34,17 @@ BeforeAll {
             RecipientTypeDetails       = 'SharedMailbox'
         }
     }
-    function Set-Mailbox {
+    function Global:Set-Mailbox {
         param([string]$Identity,$ForwardingSmtpAddress,$ForwardingAddress,
               [bool]$DeliverToMailboxAndForward,[string]$ErrorAction)
     }
 
-    # ── Load v2.1 modules ──────────────────────────────────────────────────────
-    Import-Module (Join-Path $premiumMods 'BatchContext.psm1')   -Force -DisableNameChecking
+    # ── Load v2.1 modules — BatchContext MUST be last to override any stubs ──────
     Import-Module (Join-Path $premiumMods 'BatchDiff.psm1')      -Force -DisableNameChecking
     Import-Module (Join-Path $premiumMods 'BatchPolicy.psm1')    -Force -DisableNameChecking
     Import-Module (Join-Path $premiumMods 'BatchApproval.psm1')  -Force -DisableNameChecking
     Import-Module (Join-Path $premiumMods 'MailboxExtended.psm1')-Force -DisableNameChecking
+    Import-Module (Join-Path $premiumMods 'BatchContext.psm1')   -Force -DisableNameChecking
 
     # ── Shared helpers ─────────────────────────────────────────────────────────
     function New-TestContext {
@@ -476,8 +477,8 @@ Describe 'MailboxExtended — Get-DecomMailForwardingState' {
     }
 
     It 'IsForwardingActive is false when no forwarding configured' {
-        function Get-EXOMailbox {
-            param([string]$Identity,[string[]]$Properties,[string]$ErrorAction)
+        function Global:Get-EXOMailbox {
+            param([string]$Identity,[string[]]$Property,[string]$ErrorAction)
             [pscustomobject]@{
                 ForwardingSmtpAddress      = $null
                 ForwardingAddress          = $null
@@ -529,8 +530,8 @@ Describe 'MailboxExtended — Set-DecomMailForwarding' {
 Describe 'MailboxExtended — Remove-DecomMailForwarding' {
 
     It 'returns Skipped when no forwarding is active' {
-        function Get-EXOMailbox {
-            param([string]$Identity,[string[]]$Properties,[string]$ErrorAction)
+        function Global:Get-EXOMailbox {
+            param([string]$Identity,[string[]]$Property,[string]$ErrorAction)
             [pscustomobject]@{
                 ForwardingSmtpAddress = $null; ForwardingAddress = $null
                 DeliverToMailboxAndForward = $false; RecipientTypeDetails = 'SharedMailbox'

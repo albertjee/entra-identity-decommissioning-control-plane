@@ -207,7 +207,7 @@ function Remove-DecomGroupMemberships {
 
             } catch {
                 $errMsg = $_.Exception.Message
-                $failed.Add("$displayName: $errMsg")
+                $failed.Add("${displayName}: $errMsg")
                 $warnings.Add("Failed to remove from '$displayName': $errMsg")
             }
         }

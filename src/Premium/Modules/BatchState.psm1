@@ -172,8 +172,10 @@ function Restore-DecomBatchState {
         OperatorUPN      = $data.OperatorUPN
         OperatorObjectId = $data.OperatorObjectId
         MaxParallel      = [int]$data.MaxParallel
-        Entries          = $entries
+        Entries          = $null
     }
+    # Use Add-Member to preserve [ordered] type in PS7
+    $batch | Add-Member -Force -NotePropertyName Entries -NotePropertyValue $entries
 
     return $batch
 }
