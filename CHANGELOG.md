@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.5a — Stabilization Release (2026-04-25)
+
+v1.5a is a post-review stabilization release following the v1.5 security hardening milestone.
+It introduces no new functional scope or authority and does not modify the threat model,
+privilege profile, or guardrail logic documented in `docs/threat-model-v1.5.md`.
+The release exists solely to add security documentation artifacts (security posture summary,
+red-team scenario analysis, refined SECURITY.md) after initial audit review.
+
+**No code changes. No new threat surface. Existing risk acceptance remains valid.**
+
 ## v1.5 — Security Hardening Release (2026-04-25)
 
 ### Evidence Sealing (tamper-evidence)
