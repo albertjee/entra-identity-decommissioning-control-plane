@@ -77,6 +77,9 @@ function Invoke-DecomBatch {
         [switch]$EnableLitigationHold,
         [switch]$RemoveLicenses,
         [switch]$SkipFailed,
+        [switch]$SkipGroups,
+        [switch]$SkipRoles,
+        [switch]$SkipAuthMethods,
 
         $Cmdlet   # PSCmdlet in production; stub acceptable in tests
     )
@@ -154,6 +157,17 @@ function Invoke-DecomBatch {
                 -EnableLitigationHold:$EnableLitigationHold `
                 -RemoveLicenses:     $RemoveLicenses `
                 -Cmdlet              $Cmdlet
+
+            # ── Access removal (Phase 3) ──────────────────────────────────
+            if (-not $SkipGroups -and -not $SkipRoles -and -not $SkipAuthMethods) {
+                $accessResults = Invoke-DecomAccessRemoval `
+                    -Context $ctx `
+                    -Cmdlet  $Cmdlet `
+                    -SkipGroups:      $SkipGroups `
+                    -SkipRoles:       $SkipRoles `
+                    -SkipAuthMethods: $SkipAuthMethods
+                foreach ($ar in $accessResults) { $result.Results += $ar }
+            }
 
             Set-DecomBatchEntryStatus -Batch $Batch -UPN $entry.UPN -Status 'Completed' -RunId $runId
 

@@ -52,6 +52,15 @@ param(
     [Parameter(ParameterSetName = 'New')]
     [switch]$NoSeal,
 
+    [Parameter(ParameterSetName = 'New')]
+    [switch]$SkipGroups,
+
+    [Parameter(ParameterSetName = 'New')]
+    [switch]$SkipRoles,
+
+    [Parameter(ParameterSetName = 'New')]
+    [switch]$SkipAuthMethods,
+
     # ── Resume params ──────────────────────────────────────────────────────────
     [Parameter(ParameterSetName = 'Resume', Mandatory)]
     [ValidateScript({ Test-Path $_ })]
@@ -87,7 +96,7 @@ foreach ($mod in $liteModuleOrder) {
 . $LiteWorkflow
 
 # ── Import Premium modules ────────────────────────────────────────────────────
-$premiumModuleOrder = @('BatchContext','BatchState','BatchOrchestrator','BatchReporting')
+$premiumModuleOrder = @('BatchContext','BatchState','BatchOrchestrator','BatchReporting','AccessRemoval')
 foreach ($mod in $premiumModuleOrder) {
     Import-Module (Join-Path $PremiumMods "$mod.psm1") -Force -DisableNameChecking
 }
@@ -148,6 +157,9 @@ try {
         -Batch               $Batch `
         -OutOfOfficeMessage  $OutOfOfficeMessage `
         -RemoveLicenses:     $RemoveLicenses `
+        -SkipGroups:         $SkipGroups `
+        -SkipRoles:          $SkipRoles `
+        -SkipAuthMethods:    $SkipAuthMethods `
         -SkipFailed:         $SkipFailed `
         -Cmdlet              $PSCmdlet
 
