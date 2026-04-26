@@ -107,24 +107,26 @@ function New-DecomBatchContext {
         [int]$MaxParallel = 1   # sequential only in v2.0
     )
 
-    # PS7-safe: New-Object + Add-Member preserves all property types across module boundaries
-    $batch = New-Object -TypeName PSObject
-    $batch | Add-Member -NotePropertyName BatchId          -NotePropertyValue ([guid]::NewGuid().Guid)
-    $batch | Add-Member -NotePropertyName TicketId         -NotePropertyValue $TicketId
-    $batch | Add-Member -NotePropertyName CreatedUtc       -NotePropertyValue ((Get-Date).ToUniversalTime().ToString('o'))
-    $batch | Add-Member -NotePropertyName OutputRoot       -NotePropertyValue $OutputRoot
-    $batch | Add-Member -NotePropertyName EvidenceLevel    -NotePropertyValue $EvidenceLevel
-    $batch | Add-Member -NotePropertyName WhatIf           -NotePropertyValue ([bool]$WhatIfMode)
-    $batch | Add-Member -NotePropertyName NonInteractive   -NotePropertyValue ([bool]$NonInteractive)
-    $batch | Add-Member -NotePropertyName Force            -NotePropertyValue ([bool]$Force)
-    $batch | Add-Member -NotePropertyName OperatorUPN      -NotePropertyValue $OperatorUPN
-    $batch | Add-Member -NotePropertyName OperatorObjectId -NotePropertyValue $OperatorObjectId
-    $batch | Add-Member -NotePropertyName MaxParallel      -NotePropertyValue $MaxParallel
-    $batch | Add-Member -NotePropertyName Entries          -NotePropertyValue ([ordered]@{})
+    $batch = [pscustomobject]@{
+        BatchId          = [guid]::NewGuid().Guid
+        TicketId         = $TicketId
+        CreatedUtc       = (Get-Date).ToUniversalTime().ToString('o')
+        OutputRoot       = $OutputRoot
+        EvidenceLevel    = $EvidenceLevel
+        WhatIf           = [bool]$WhatIfMode
+        NonInteractive   = [bool]$NonInteractive
+        Force            = [bool]$Force
+        OperatorUPN      = $OperatorUPN
+        OperatorObjectId = $OperatorObjectId
+        MaxParallel      = $MaxParallel
+        Entries          = $null
+    }
+    # Add-Member ensures [ordered] type is preserved in PS7 across module boundaries
+    $batch | Add-Member -Force -NotePropertyName Entries -NotePropertyValue ([ordered]@{})
 
     foreach ($upn in $UpnList) {
         if ($upn -and $upn.Trim()) {
-            _AddBatchEntry -Batch $batch -UPN $upn.Trim() | Out-Null
+            _AddBatchEntry -Batch $batch -UPN $upn.Trim()
         }
     }
 
@@ -157,11 +159,10 @@ function New-DecomBatchEntry {
         [Parameter(Mandatory)][string]$UPN
     )
 
-    $key     = $UPN.ToLower().Trim()
-    $entries = _GetEntries -Batch $Batch
+    $key = $UPN.ToLower().Trim()
 
-    if ($entries.Contains($key)) {
-        return $entries[$key]
+    if ($Batch.Entries.Contains($key)) {
+        return $Batch.Entries[$key]
     }
 
     return _AddBatchEntry -Batch $Batch -UPN $UPN.Trim()
@@ -178,10 +179,9 @@ function Get-DecomBatchEntry {
         [Parameter(Mandatory)][string]$UPN
     )
 
-    $key     = $UPN.ToLower().Trim()
-    $entries = _GetEntries -Batch $Batch
-    if ($entries.Contains($key)) {
-        return $entries[$key]
+    $key = $UPN.ToLower().Trim()
+    if ($Batch.Entries.Contains($key)) {
+        return $Batch.Entries[$key]
     }
     return $null
 }
@@ -226,9 +226,8 @@ function Set-DecomBatchEntryStatus {
         [string]$ErrorMessage
     )
 
-    $key     = $UPN.ToLower().Trim()
-    $entries = _GetEntries -Batch $Batch
-    $entry   = $entries[$key]
+    $key   = $UPN.ToLower().Trim()
+    $entry = $Batch.Entries[$key]
     if (-not $entry) {
         throw "Set-DecomBatchEntryStatus: UPN '$UPN' not found in batch '$($Batch.BatchId)'."
     }
@@ -276,13 +275,12 @@ function Get-DecomBatchSummary {
         Resumed   = 0
     }
 
-    $entries = _GetEntries -Batch $Batch
-    foreach ($key in $entries.Keys) {
-        $s = $entries[$key].Status
+    foreach ($key in $Batch.Entries.Keys) {
+        $s = $Batch.Entries[$key].Status
         if ($counts.ContainsKey($s)) { $counts[$s]++ }
     }
 
-    $total   = $entries.Count
+    $total   = $Batch.Entries.Count
     $done    = $counts['Completed'] + $counts['Failed'] + $counts['Skipped']
     $allDone = ($total -gt 0) -and ($done -eq $total)
 
@@ -302,17 +300,6 @@ function Get-DecomBatchSummary {
 }
 
 # ── Private helpers ────────────────────────────────────────────────────────────
-
-
-function _GetEntries {
-    # PS7-safe accessor for the Entries property across module reload boundaries
-    param([pscustomobject]$Batch)
-    $prop = $Batch.PSObject.Properties['Entries']
-    if ($null -eq $prop) {
-        throw "Batch object has no Entries property. Ensure it was created by New-DecomBatchContext."
-    }
-    return $prop.Value
-}
 
 function _AddBatchEntry {
     # Internal — not exported. Caller has already validated/trimmed $UPN.
@@ -337,7 +324,7 @@ function _AddBatchEntry {
         OutputPath   = $null   # set by Invoke-DecomBatch before run
     }
 
-    (_GetEntries -Batch $Batch)[$key] = $entry
+    $Batch.Entries[$key] = $entry
     return $entry
 }
 
@@ -347,5 +334,3 @@ Export-ModuleMember -Function `
     Get-DecomBatchEntry, `
     Set-DecomBatchEntryStatus, `
     Get-DecomBatchSummary
-
-

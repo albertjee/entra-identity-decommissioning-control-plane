@@ -1,10 +1,12 @@
 # MailboxExtended.psm1 — Mail forwarding control
-# Premium v2.1 — Feature 4
+# Premium v2.0
 #
 # Functions:
-#   Set-DecomMailForwarding    — configure or clear mail forwarding
-#   Remove-DecomMailForwarding — explicitly clear all forwarding settings
 #   Get-DecomMailForwardingState — snapshot current forwarding state
+#   Set-DecomMailForwarding      — configure or clear mail forwarding
+#   Remove-DecomMailForwarding   — explicitly clear all forwarding settings
+#
+# Note: Litigation Hold moved to ComplianceRemediation.psm1
 #
 # Design:
 #   Lite Discovery.psm1 captures forwarding as evidence (snapshot-only).
@@ -302,4 +304,4 @@ function _InvokeSetMailboxWithRetry {
 Export-ModuleMember -Function `
     Get-DecomMailForwardingState, `
     Set-DecomMailForwarding, `
-    Remove-DecomMailForwarding
+    Remove-DecomMailForwarding, `
