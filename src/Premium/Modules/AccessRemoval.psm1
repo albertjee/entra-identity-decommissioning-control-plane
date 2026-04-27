@@ -30,9 +30,9 @@ Set-StrictMode -Version Latest
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 # Auth method types that cannot be removed via Graph user endpoint
+# windowsHelloForBusiness requires device context — must be removed device-side
 $script:SkippedAuthMethodTypes = @(
-    '#microsoft.graph.windowsHelloForBusinessAuthenticationMethod',
-    '#microsoft.graph.temporaryAccessPassAuthenticationMethod'
+    '#microsoft.graph.windowsHelloForBusinessAuthenticationMethod'
 )
 
 # ── Public orchestrator ────────────────────────────────────────────────────────
@@ -315,7 +315,7 @@ function Remove-DecomAuthMethods {
 
         Skipped method types (cannot be removed via Graph user endpoint):
           - windowsHelloForBusinessAuthenticationMethod
-          - temporaryAccessPassAuthenticationMethod
+
 
         WhatIf-aware: enumerates and logs but does not call Delete.
 
@@ -516,8 +516,9 @@ function _RemoveEligibleRoles {
 
     try {
         # PIM eligible schedules — different endpoint from active assignments
+        # Use Stop so enumeration failures surface as Warning, not false-clean "none found"
         $schedules = @(Get-MgRoleManagementDirectoryRoleEligibilitySchedule `
-            -Filter "principalId eq '$UserId'" -All -ErrorAction SilentlyContinue)
+            -Filter "principalId eq '$UserId'" -All -ErrorAction Stop)
 
         if ($schedules.Count -eq 0) {
             return New-DecomActionResult -ActionName $actionName -Phase $Phase `
@@ -598,6 +599,9 @@ function _RemoveEligibleRoles {
 function _DeleteAuthMethod {
     # Dispatches to the correct type-specific Graph Delete endpoint.
     # Returns @{ Success = [bool]; Error = [string] }
+    # Covers all removable method types as of Graph SDK v2 / May 2026.
+    # windowsHelloForBusiness is intentionally excluded — cannot be removed
+    # via the user endpoint; requires device-side removal.
     param([string]$UserId, [string]$MethodId, [string]$MethodType)
 
     try {
@@ -622,8 +626,24 @@ function _DeleteAuthMethod {
                 Remove-MgUserAuthenticationEmailMethod `
                     -UserId $UserId -EmailAuthenticationMethodId $MethodId -ErrorAction Stop
             }
+            '*temporaryAccessPassAuthenticationMethod' {
+                Remove-MgUserAuthenticationTemporaryAccessPassMethod `
+                    -UserId $UserId -TemporaryAccessPassAuthenticationMethodId $MethodId -ErrorAction Stop
+            }
+            '*passwordAuthenticationMethod' {
+                # Password methods cannot be deleted via Graph — only reset.
+                # Return a structured warning so the caller surfaces this to the operator.
+                return @{ Success = $false; Error = "Password auth method cannot be deleted via Graph — reset only. Manual action required." }
+            }
+            '*platformCredentialAuthenticationMethod' {
+                # Platform credential (passkey on device) — remove via Graph
+                Remove-MgUserAuthenticationPlatformCredentialMethod `
+                    -UserId $UserId -PlatformCredentialAuthenticationMethodId $MethodId -ErrorAction Stop
+            }
             default {
-                return @{ Success = $false; Error = "No Delete handler for method type '$MethodType'" }
+                # Unknown or unsupported type — return Warning evidence, do not throw.
+                # This ensures new method types added by Microsoft do not silently abort the run.
+                return @{ Success = $false; Error = "No Delete handler for method type '$MethodType' — manual removal required. Add handler in _DeleteAuthMethod when Graph SDK cmdlet is available." }
             }
         }
         return @{ Success = $true; Error = $null }

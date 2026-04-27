@@ -304,4 +304,4 @@ function _InvokeSetMailboxWithRetry {
 Export-ModuleMember -Function `
     Get-DecomMailForwardingState, `
     Set-DecomMailForwarding, `
-    Remove-DecomMailForwarding, `
+    Remove-DecomMailForwarding

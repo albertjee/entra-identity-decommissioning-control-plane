@@ -14,7 +14,7 @@ BeforeAll {
     # These mirror the pattern in Decom.Tests.ps1 — function stubs in BeforeAll
     # so no real Graph/EXO calls are made.
 
-    function New-DecomRunContext {
+    function Global:New-DecomRunContext {
         param(
             [string]$TargetUPN, [string]$TicketId, [string]$OutputPath,
             [string]$EvidenceLevel = 'Forensic',
@@ -39,25 +39,25 @@ BeforeAll {
         }
     }
 
-    function New-DecomState {
+    function Global:New-DecomState {
         param([string]$RunId)
         [pscustomobject]@{ RunId = $RunId; Phases = [ordered]@{} }
     }
 
-    function Initialize-DecomLog        { param([string]$Path) }
-    function Initialize-DecomEvidenceStore {
+    function Global:Initialize-DecomLog        { param([string]$Path) }
+    function Global:Initialize-DecomEvidenceStore {
         param([pscustomobject]$Context, [string]$RunId, [string]$NdjsonPath)
         $Context | Add-Member -Force -NotePropertyName Evidence         -NotePropertyValue ([System.Collections.Generic.List[object]]::new())
         $Context | Add-Member -Force -NotePropertyName RunId            -NotePropertyValue $RunId
         $Context | Add-Member -Force -NotePropertyName EvidencePrevHash -NotePropertyValue 'GENESIS'
     }
-    function Write-DecomConsole         { param([string]$Level, [string]$Message) }
-    function Export-DecomJsonReport     { param([object]$WorkflowResult, [string]$Path) }
-    function Export-DecomHtmlReport     { param([object]$WorkflowResult, [string]$Path) }
-    function Write-DecomEvidenceManifest{ param([pscustomobject]$Context, [string]$OutputPath) }
+    function Global:Write-DecomConsole         { param([string]$Level, [string]$Message) }
+    function Global:Export-DecomJsonReport     { param([object]$WorkflowResult, [string]$Path) }
+    function Global:Export-DecomHtmlReport     { param([object]$WorkflowResult, [string]$Path) }
+    function Global:Write-DecomEvidenceManifest{ param([pscustomobject]$Context, [string]$OutputPath) }
 
-    # Lite workflow stub — returns a minimal success result
-    function Invoke-DecomWorkflow {
+    # ── Lite workflow stub — returns a minimal success result ──────────────────
+    function Global:Invoke-DecomWorkflow {
         param(
             [pscustomobject]$Context,
             [pscustomobject]$State,
@@ -85,10 +85,84 @@ BeforeAll {
         }
     }
 
+    # ── Lite workflow and access removal stubs ────────────────────────────────
+    # Global scope so BatchOrchestrator's private wrappers can find them
+    function Global:Invoke-DecomAccessRemoval {
+        param([pscustomobject]$Context, $Cmdlet,
+              [switch]$SkipGroups, [switch]$SkipRoles, [switch]$SkipAuthMethods)
+        @()  # return empty results
+    }
+
+    # ── Premium remediation stubs — BatchOrchestrator now calls these ─────────
+    # Stub all premium phase functions so BatchOrchestrator tests don't require
+    # ComplianceRemediation, LicenseRemediation, DeviceRemediation, etc. loaded.
+    function Global:Add-DecomEvidenceEvent {
+        param([pscustomobject]$Context, [string]$Phase, [string]$ActionName,
+              [string]$Status, [bool]$IsCritical, [string]$Message,
+              [hashtable]$BeforeState, [hashtable]$AfterState,
+              [hashtable]$Evidence, [string]$ControlObjective, [string]$RiskMitigated)
+    }
+    function Set-DecomLitigationHold {
+        param([pscustomobject]$Context, [bool]$LitigationHold = $true,
+              [int]$LitigationHoldDuration = 0, $Cmdlet)
+        [pscustomobject]@{ ActionName = 'Set Litigation Hold'; Phase = 'Compliance'
+            Status = 'Success'; IsCritical = $true; TargetUPN = $Context.TargetUPN
+            Message = 'Stub'; BeforeState = @{}; AfterState = @{}; Evidence = @{}
+            WarningMessages = @(); BlockerMessages = @(); ManualFollowUp = @()
+            RecommendedNext = $null; ControlObjective = ''; RiskMitigated = ''
+            FailureClass = $null; StepId = 'stub'; TimestampUtc = (Get-Date).ToString('o') }
+    }
+    function Remove-DecomLicenses {
+        param([pscustomobject]$Context, $Cmdlet)
+        [pscustomobject]@{ ActionName = 'Remove Licenses'; Phase = 'LicenseRemediation'
+            Status = 'Skipped'; IsCritical = $false; TargetUPN = $Context.TargetUPN
+            Message = 'Stub'; BeforeState = @{}; AfterState = @{}; Evidence = @{}
+            WarningMessages = @(); BlockerMessages = @(); ManualFollowUp = @()
+            RecommendedNext = $null; ControlObjective = ''; RiskMitigated = ''
+            FailureClass = $null; StepId = 'stub'; TimestampUtc = (Get-Date).ToString('o') }
+    }
+    function Invoke-DecomDeviceRemediation {
+        param([pscustomobject]$Context, [switch]$SkipWipe, $Cmdlet)
+        @()
+    }
+    function Remove-DecomAppOwnership {
+        param([pscustomobject]$Context, $AppOwnershipState, $Cmdlet)
+        [pscustomobject]@{ ActionName = 'Remove App Ownership'; Phase = 'AppOwnership'
+            Status = 'Skipped'; IsCritical = $false; TargetUPN = $Context.TargetUPN
+            Message = 'Stub'; BeforeState = @{}; AfterState = @{}; Evidence = @{}
+            WarningMessages = @(); BlockerMessages = @(); ManualFollowUp = @()
+            RecommendedNext = $null; ControlObjective = ''; RiskMitigated = ''
+            FailureClass = $null; StepId = 'stub'; TimestampUtc = (Get-Date).ToString('o') }
+    }
+    function Remove-DecomAzureRBAC {
+        param([pscustomobject]$Context, $RBACState, $Cmdlet)
+        [pscustomobject]@{ ActionName = 'Remove Azure RBAC'; Phase = 'AzureRBAC'
+            Status = 'Skipped'; IsCritical = $false; TargetUPN = $Context.TargetUPN
+            Message = 'Stub'; BeforeState = @{}; AfterState = @{}; Evidence = @{}
+            WarningMessages = @(); BlockerMessages = @(); ManualFollowUp = @()
+            RecommendedNext = $null; ControlObjective = ''; RiskMitigated = ''
+            FailureClass = $null; StepId = 'stub'; TimestampUtc = (Get-Date).ToString('o') }
+    }
+    function Remove-DecomMailForwarding {
+        param([pscustomobject]$Context, $Cmdlet)
+        [pscustomobject]@{ ActionName = 'Remove Mail Forwarding'; Phase = 'MailboxRemediation'
+            Status = 'Skipped'; IsCritical = $false; TargetUPN = $Context.TargetUPN
+            Message = 'Stub'; BeforeState = @{}; AfterState = @{}; Evidence = @{}
+            WarningMessages = @(); BlockerMessages = @(); ManualFollowUp = @()
+            RecommendedNext = $null; ControlObjective = ''; RiskMitigated = ''
+            FailureClass = $null; StepId = 'stub'; TimestampUtc = (Get-Date).ToString('o') }
+    }
+    function Get-DecomUpnPolicy {
+        param([pscustomobject]$Policy, [string]$UPN)
+        [pscustomobject]@{ LitigationHold = $null; EvidenceLevel = $null
+            WhatIf = $null; RemoveLicenses = $null
+            SkipGroups = $null; SkipRoles = $null; SkipAuthMethods = $null }
+    }
+
     # ── Load Premium modules ───────────────────────────────────────────────────
+    Import-Module (Join-Path $premiumMods 'BatchContext.psm1')     -Force -DisableNameChecking
     Import-Module (Join-Path $premiumMods 'BatchState.psm1')       -Force -DisableNameChecking
     Import-Module (Join-Path $premiumMods 'BatchOrchestrator.psm1')-Force -DisableNameChecking
-    Import-Module (Join-Path $premiumMods 'BatchContext.psm1')     -Force -DisableNameChecking
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

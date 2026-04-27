@@ -16,7 +16,7 @@
 
 #Requires -Version 5.1
 
-Set-StrictMode -Version Latest
+Set-StrictMode -Version 2.0
 
 # ── Batch envelope ─────────────────────────────────────────────────────────────
 
@@ -82,7 +82,7 @@ function New-DecomBatchContext {
           OperatorUPN    [string]
           OperatorObjectId [string]
           MaxParallel    [int]     — reserved
-          Entries        [ordered] — keyed by normalised UPN
+          Entries        [OrderedDictionary] — keyed by normalised UPN (case-insensitive)
     #>
     [CmdletBinding()]
     param(
@@ -107,6 +107,11 @@ function New-DecomBatchContext {
         [int]$MaxParallel = 1   # sequential only in v2.0
     )
 
+    # Use OrdinalIgnoreCase OrderedDictionary — survives cross-module boundary
+    # under Set-StrictMode -Version 2.0 in both PS5.1 and PS7.
+    $entries = New-Object 'System.Collections.Specialized.OrderedDictionary' `
+                   ([System.StringComparer]::OrdinalIgnoreCase)
+
     $batch = [pscustomobject]@{
         BatchId          = [guid]::NewGuid().Guid
         TicketId         = $TicketId
@@ -116,17 +121,16 @@ function New-DecomBatchContext {
         WhatIf           = [bool]$WhatIfMode
         NonInteractive   = [bool]$NonInteractive
         Force            = [bool]$Force
+        NoSeal           = $false
         OperatorUPN      = $OperatorUPN
         OperatorObjectId = $OperatorObjectId
         MaxParallel      = $MaxParallel
-        Entries          = $null
+        Entries          = $entries
     }
-    # Add-Member ensures [ordered] type is preserved in PS7 across module boundaries
-    $batch | Add-Member -Force -NotePropertyName Entries -NotePropertyValue ([ordered]@{})
 
     foreach ($upn in $UpnList) {
-        if ($upn -and $upn.Trim()) {
-            _AddBatchEntry -Batch $batch -UPN $upn.Trim()
+        if (-not [string]::IsNullOrWhiteSpace($upn)) {
+            $null = _AddBatchEntry -Batch $batch -UPN $upn.Trim()
         }
     }
 

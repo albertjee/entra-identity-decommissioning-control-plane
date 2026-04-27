@@ -64,13 +64,13 @@ function Get-DecomDeviceState {
         $devices = @(Get-MgUserRegisteredDevice -UserId $Context.TargetUPN -All -ErrorAction Stop)
 
         $deviceList = foreach ($d in $devices) {
-            $detail = Get-MgDevice -DeviceId $d.Id `
-                -Property Id, DisplayName, TrustType, AccountEnabled, `
-                          IsCompliant, IsManaged, OperatingSystem, `
-                          OperatingSystemVersion, ApproximateLastSignInDateTime `
-                -ErrorAction SilentlyContinue
+            try {
+                $detail = Get-MgDevice -DeviceId $d.Id `
+                    -Property Id, DisplayName, TrustType, AccountEnabled, `
+                              IsCompliant, IsManaged, OperatingSystem, `
+                              OperatingSystemVersion, ApproximateLastSignInDateTime `
+                    -ErrorAction Stop
 
-            if ($detail) {
                 [pscustomobject]@{
                     DeviceId             = $detail.Id
                     DisplayName          = $detail.DisplayName
@@ -83,6 +83,24 @@ function Get-DecomDeviceState {
                     LastSignIn           = $detail.ApproximateLastSignInDateTime
                     IsCorporate          = ($detail.TrustType -in @('AzureAD','ServerAD'))
                     IsBYOD               = ($detail.TrustType -eq 'Workplace')
+                    DetailReadError      = $null
+                }
+            } catch {
+                # Detail fetch failed — keep a placeholder so the audit trail reflects
+                # incomplete coverage. Disable will be attempted by DeviceId alone.
+                [pscustomobject]@{
+                    DeviceId             = $d.Id
+                    DisplayName          = "Unknown (detail read failed)"
+                    TrustType            = 'Unknown'
+                    AccountEnabled       = $null
+                    IsCompliant          = $null
+                    IsManaged            = $null
+                    OperatingSystem      = $null
+                    OSVersion            = $null
+                    LastSignIn           = $null
+                    IsCorporate          = $false
+                    IsBYOD               = $true   # default to BYOD-safe on unknown trust type
+                    DetailReadError      = $_.Exception.Message
                 }
             }
         }
@@ -313,26 +331,40 @@ function _InvokeIntuneDeviceAction {
 
         $intuneDev = $intuneDevices[0]
 
+        # BYOD PROTECTION — dual-layer guard (LOCKED, non-overridable):
+        # Layer 1: Entra TrustType = 'Workplace' (Entra Registered)
+        # Layer 2: Intune ManagedDeviceOwnerType = 'personal'
+        # Either layer marking the device as personal forces retire-only.
+        # A device must be confirmed corporate by BOTH layers for full wipe.
+        $intuneDev = Get-MgDeviceManagementManagedDevice -ManagedDeviceId $intuneDev.Id `
+            -Property Id, ManagedDeviceOwnerType -ErrorAction Stop
+
+        $isIntunePersonal = ($intuneDev.ManagedDeviceOwnerType -eq 'personal')
+        $isBYOD           = $Device.IsBYOD -or $isIntunePersonal
+
+        # Update action name to reflect Intune-confirmed ownership type
+        $actionName = if ($isBYOD) { 'Retire Device (BYOD)' } else { 'Wipe Device (Corporate)' }
+
         if ($Context.WhatIf) {
-            $intent = if ($Device.IsBYOD) { 'retire (selective wipe)' } else { 'full wipe' }
+            $intent = if ($isBYOD) { 'retire (selective wipe)' } else { 'full wipe' }
             return New-DecomActionResult -ActionName $actionName -Phase $phase `
                 -Status 'Success' -IsCritical $false -TargetUPN $Context.TargetUPN `
-                -Message "[WhatIf] Would $intent Intune device '$($Device.DisplayName)' (TrustType: $($Device.TrustType))." `
+                -Message "[WhatIf] Would $intent Intune device '$($Device.DisplayName)' (EntraTrustType: $($Device.TrustType), IntuneOwnerType: $($intuneDev.ManagedDeviceOwnerType))." `
                 -ControlObjective 'Remove corporate data from managed devices' `
                 -RiskMitigated 'Corporate data exposure on unmanaged or offboarded device'
         }
 
-        if ($Device.IsBYOD) {
+        if ($isBYOD) {
             # BYOD — retire only (selective wipe of corporate data)
             Invoke-MgRetireDeviceManagementManagedDevice `
                 -ManagedDeviceId $intuneDev.Id -ErrorAction Stop
         } else {
-            # Corporate — full wipe
+            # Corporate confirmed by both Entra and Intune — full wipe
             Clear-MgDeviceManagementManagedDevice `
                 -ManagedDeviceId $intuneDev.Id -ErrorAction Stop
         }
 
-        $action = if ($Device.IsBYOD) { 'retired (selective wipe)' } else { 'wiped (full)' }
+        $action = if ($isBYOD) { 'retired (selective wipe)' } else { 'wiped (full)' }
 
         Add-DecomEvidenceEvent -Context $Context -Phase $phase `
             -ActionName $actionName -Status 'Success' -IsCritical $false `

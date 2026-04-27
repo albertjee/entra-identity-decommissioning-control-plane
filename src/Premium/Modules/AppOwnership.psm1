@@ -62,10 +62,25 @@ function Get-DecomAppOwnershipState {
 
         # App registrations owned by this user
         $ownedApps = @(Get-MgUserOwnedObject -UserId $Context.TargetUPN -All -ErrorAction Stop |
-            Where-Object { $_.'@odata.type' -eq '#microsoft.graph.application' })
+            Where-Object { $_.AdditionalProperties['@odata.type'] -eq '#microsoft.graph.application' })
 
         $appList = foreach ($app in $ownedApps) {
-            $owners = @(Get-MgApplicationOwner -ApplicationId $app.Id -All -ErrorAction SilentlyContinue)
+            try {
+                $owners = @(Get-MgApplicationOwner -ApplicationId $app.Id -All -ErrorAction Stop)
+            } catch {
+                # Owner enumeration failed — cannot safely assess sole-owner status
+                # Do not attempt removal for this app
+                [pscustomobject]@{
+                    Id           = $app.Id
+                    DisplayName  = $app.AdditionalProperties['displayName']
+                    AppId        = $app.AdditionalProperties['appId']
+                    OwnerCount   = -1
+                    OwnerIds     = @()
+                    IsSoleOwner  = $false
+                    OwnerReadError = $_.Exception.Message
+                }
+                continue
+            }
             [pscustomobject]@{
                 Id           = $app.Id
                 DisplayName  = $app.AdditionalProperties['displayName']
@@ -78,10 +93,23 @@ function Get-DecomAppOwnershipState {
 
         # Service principals owned by this user
         $ownedSpns = @(Get-MgUserOwnedObject -UserId $Context.TargetUPN -All -ErrorAction Stop |
-            Where-Object { $_.'@odata.type' -eq '#microsoft.graph.servicePrincipal' })
+            Where-Object { $_.AdditionalProperties['@odata.type'] -eq '#microsoft.graph.servicePrincipal' })
 
         $spnList = foreach ($spn in $ownedSpns) {
-            $owners = @(Get-MgServicePrincipalOwner -ServicePrincipalId $spn.Id -All -ErrorAction SilentlyContinue)
+            try {
+                $owners = @(Get-MgServicePrincipalOwner -ServicePrincipalId $spn.Id -All -ErrorAction Stop)
+            } catch {
+                [pscustomobject]@{
+                    Id             = $spn.Id
+                    DisplayName    = $spn.AdditionalProperties['displayName']
+                    AppId          = $spn.AdditionalProperties['appId']
+                    OwnerCount     = -1
+                    OwnerIds       = @()
+                    IsSoleOwner    = $false
+                    OwnerReadError = $_.Exception.Message
+                }
+                continue
+            }
             [pscustomobject]@{
                 Id          = $spn.Id
                 DisplayName = $spn.AdditionalProperties['displayName']
@@ -180,6 +208,7 @@ function Remove-DecomAppOwnership {
             $r = _RemoveOwnerFromObject -Context $Context `
                 -ObjectId $app.Id -DisplayName $app.DisplayName `
                 -ObjectType 'AppRegistration' -IsSoleOwner $app.IsSoleOwner `
+                -OwnerReadError ($app.PSObject.Properties['OwnerReadError']?.Value) `
                 -RemoveCmd { Remove-MgApplicationOwnerByRef -ApplicationId $app.Id -DirectoryObjectId $AppOwnershipState.UserId -ErrorAction Stop }
             $results.Add($r)
             if ($r.Status -eq 'Warning')  { $soleOwner++ }
@@ -192,6 +221,7 @@ function Remove-DecomAppOwnership {
             $r = _RemoveOwnerFromObject -Context $Context `
                 -ObjectId $spn.Id -DisplayName $spn.DisplayName `
                 -ObjectType 'ServicePrincipal' -IsSoleOwner $spn.IsSoleOwner `
+                -OwnerReadError ($spn.PSObject.Properties['OwnerReadError']?.Value) `
                 -RemoveCmd { Remove-MgServicePrincipalOwnerByRef -ServicePrincipalId $spn.Id -DirectoryObjectId $AppOwnershipState.UserId -ErrorAction Stop }
             $results.Add($r)
             if ($r.Status -eq 'Warning')  { $soleOwner++ }
@@ -231,13 +261,14 @@ function Remove-DecomAppOwnership {
 
 function _RemoveOwnerFromObject {
     # Removes the target user as owner from a single app or SPN.
-    # Enforces sole-owner guard — returns Warning without removing if sole owner.
+    # Enforces sole-owner guard and owner-read-error guard.
     param(
         [pscustomobject]$Context,
         [string]$ObjectId,
         [string]$DisplayName,
         [string]$ObjectType,
         [bool]$IsSoleOwner,
+        [string]$OwnerReadError,
         [scriptblock]$RemoveCmd
     )
 
@@ -248,6 +279,17 @@ function _RemoveOwnerFromObject {
             ObjectType  = $ObjectType
             Status      = 'Warning'
             Note        = 'Sole owner — ownership not removed. Assign a new owner first, then re-run.'
+        }
+    }
+
+    # If owner read failed for this object, do not attempt removal
+    if ($OwnerReadError) {
+        return [pscustomobject]@{
+            ObjectId    = $ObjectId
+            DisplayName = $DisplayName
+            ObjectType  = $ObjectType
+            Status      = 'Warning'
+            Note        = "Owner enumeration failed — cannot verify sole-owner status. Manual review required. Error: $OwnerReadError"
         }
     }
 

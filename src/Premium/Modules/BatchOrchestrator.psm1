@@ -62,12 +62,11 @@ function Invoke-DecomBatch {
         PSCmdlet reference for ShouldProcess / ShouldContinue gates (same
         pattern as Lite Invoke-DecomWorkflow). Pass $PSCmdlet from the caller.
 
-    .OUTPUTS
-        [pscustomobject] with:
-          BatchId    [string]
-          Summary    [pscustomobject]  — from Get-DecomBatchSummary
-          Results    [object[]]        — per-UPN DecomWorkflowReturn objects
-          Errors     [pscustomobject[]] — entries that failed (for easy inspection)
+    .PARAMETER Policy
+        Optional policy object from Read-DecomBatchPolicy. When supplied,
+        per-UPN overrides are resolved via Get-DecomUpnPolicy before each
+        run context is created. Policy fields override batch-level switches
+        for that specific UPN only.
     #>
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -80,6 +79,7 @@ function Invoke-DecomBatch {
         [switch]$SkipGroups,
         [switch]$SkipRoles,
         [switch]$SkipAuthMethods,
+        [pscustomobject]$Policy,    # BatchPolicy object — optional per-UPN overrides
 
         $Cmdlet   # PSCmdlet in production; stub acceptable in tests
     )
@@ -124,17 +124,40 @@ function Invoke-DecomBatch {
 
         $entry.OutputPath = $upnDir
 
-        # Build per-UPN Lite context from batch-level settings
+        # ── Resolve per-UPN policy overrides ─────────────────────────────────
+        # If a policy file was supplied, resolve effective settings for this UPN.
+        # Per-UPN overrides take precedence over batch-level switch parameters.
+        $effectiveSkipGroups     = $SkipGroups
+        $effectiveSkipRoles      = $SkipRoles
+        $effectiveSkipAuthMethods = $SkipAuthMethods
+        $effectiveRemoveLicenses = $RemoveLicenses
+        $effectiveEvidenceLevel  = $Batch.EvidenceLevel
+        $effectiveWhatIf         = $Batch.WhatIf
+
+        if ($Policy) {
+            $upnPolicy = Get-DecomUpnPolicy -Policy $Policy -UPN $entry.UPN
+            if ($null -ne $upnPolicy.SkipGroups)      { $effectiveSkipGroups      = $upnPolicy.SkipGroups }
+            if ($null -ne $upnPolicy.SkipRoles)       { $effectiveSkipRoles       = $upnPolicy.SkipRoles }
+            if ($null -ne $upnPolicy.SkipAuthMethods) { $effectiveSkipAuthMethods = $upnPolicy.SkipAuthMethods }
+            if ($null -ne $upnPolicy.RemoveLicenses)  { $effectiveRemoveLicenses  = $upnPolicy.RemoveLicenses }
+            if ($upnPolicy.EvidenceLevel)             { $effectiveEvidenceLevel   = $upnPolicy.EvidenceLevel }
+            if ($null -ne $upnPolicy.WhatIf)          { $effectiveWhatIf          = $upnPolicy.WhatIf }
+        }
+
+        # Build per-UPN Lite context from batch-level settings + policy overrides
         $ctx = New-DecomRunContext `
-            -TargetUPN       $entry.UPN `
-            -TicketId        $Batch.TicketId `
-            -OutputPath      $upnDir `
-            -EvidenceLevel   $Batch.EvidenceLevel `
-            -WhatIfMode:     ([switch]($Batch.WhatIf)) `
-            -NonInteractive: ([switch]($Batch.NonInteractive)) `
-            -Force:          ([switch]($Batch.Force)) `
-            -OperatorUPN     $Batch.OperatorUPN `
+            -TargetUPN        $entry.UPN `
+            -TicketId         $Batch.TicketId `
+            -OutputPath       $upnDir `
+            -EvidenceLevel    $effectiveEvidenceLevel `
+            -WhatIfMode:      ([switch]($effectiveWhatIf)) `
+            -NonInteractive:  ([switch]($Batch.NonInteractive)) `
+            -Force:           ([switch]($Batch.Force)) `
+            -OperatorUPN      $Batch.OperatorUPN `
             -OperatorObjectId $Batch.OperatorObjectId
+
+        # Apply NoSeal BEFORE evidence store initialization — sealing is immutable per run
+        if ($Batch.NoSeal) { $ctx.SealEvidence = $false }
 
         $state = New-DecomState -RunId $runId
 
@@ -155,19 +178,63 @@ function Invoke-DecomBatch {
                 -State               $state `
                 -OutOfOfficeMessage  $OutOfOfficeMessage `
                 -EnableLitigationHold:$EnableLitigationHold `
-                -RemoveLicenses:     $RemoveLicenses `
+                -RemoveLicenses:     ([switch]$effectiveRemoveLicenses) `
                 -Cmdlet              $Cmdlet
 
             # ── Access removal (Phase 3) ──────────────────────────────────
-            if (-not $SkipGroups -and -not $SkipRoles -and -not $SkipAuthMethods) {
+            if (-not $effectiveSkipGroups -or -not $effectiveSkipRoles -or -not $effectiveSkipAuthMethods) {
                 $accessResults = _InvokeDecomAccessRemoval `
                     -Context $ctx `
                     -Cmdlet  $Cmdlet `
-                    -SkipGroups:      $SkipGroups `
-                    -SkipRoles:       $SkipRoles `
-                    -SkipAuthMethods: $SkipAuthMethods
+                    -SkipGroups:      ([switch]$effectiveSkipGroups) `
+                    -SkipRoles:       ([switch]$effectiveSkipRoles) `
+                    -SkipAuthMethods: ([switch]$effectiveSkipAuthMethods)
                 foreach ($ar in $accessResults) { $result.Results += $ar }
             }
+
+            # ── Premium remediation phases ────────────────────────────────
+            # SEQUENCING RULE (LOCKED):
+            # 1. ComplianceRemediation (LH) — MUST run before LicenseRemediation
+            # 2. LicenseRemediation — runs after LH
+            # 3. DeviceRemediation — disable + retire/wipe
+            # 4. AppOwnership — remove app reg and SPN ownership
+            # 5. AzureRBAC — remove Azure role assignments
+            # 6. MailboxExtended — clear mail forwarding
+
+            # Phase 4 — Litigation Hold
+            # Default on. Opt out via per-UPN policy LitigationHold = $false
+            # or batch-level -LitigationHold:$false (future parameter).
+            $effectiveLH = $true
+            if ($Policy) {
+                $upnPolicy = Get-DecomUpnPolicy -Policy $Policy -UPN $entry.UPN
+                if ($null -ne $upnPolicy.LitigationHold) {
+                    $effectiveLH = [bool]$upnPolicy.LitigationHold
+                }
+            }
+            $lhResult = Set-DecomLitigationHold -Context $ctx -LitigationHold:([switch]$effectiveLH)
+            $result.Results += $lhResult
+
+            # Phase 5 — License removal (after LH — sequencing rule)
+            if ($effectiveRemoveLicenses) {
+                $licResult = Remove-DecomLicenses -Context $ctx
+                $result.Results += $licResult
+            }
+
+            # Phase 6 — Device remediation
+            $deviceResults = Invoke-DecomDeviceRemediation -Context $ctx -Cmdlet $Cmdlet
+            foreach ($dr in $deviceResults) { $result.Results += $dr }
+
+            # Phase 7 — App and SPN ownership removal
+            $appResult = Remove-DecomAppOwnership -Context $ctx
+            $result.Results += $appResult
+
+            # Phase 8 — Azure RBAC removal
+            $rbacResult = Remove-DecomAzureRBAC -Context $ctx
+            $result.Results += $rbacResult
+
+            # Phase 9 — Mail forwarding removal
+            $fwdResult = Remove-DecomMailForwarding -Context $ctx -Cmdlet $Cmdlet
+            $result.Results += $fwdResult
 
             Set-DecomBatchEntryStatus -Batch $Batch -UPN $entry.UPN -Status 'Completed' -RunId $runId
 

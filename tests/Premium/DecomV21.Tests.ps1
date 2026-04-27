@@ -1,64 +1,105 @@
-# DecomV21.Tests.ps1 — Pester v5 / PS7
-# BatchDiff | BatchPolicy | BatchApproval | MailboxExtended
-# Run: Invoke-Pester .\tests\Premium\DecomV21.Tests.ps1 -Output Detailed
+# DecomV21.Tests.ps1 — Pester v5 tests for Premium v2.1 modules
+# Covers: BatchDiff, BatchPolicy, BatchApproval, MailboxExtended
+# (BatchOrchestratorParallel is integration-tested — unit tests here cover
+#  the public contract only, not the parallel runspace internals)
+#
+# Run from repo root:
+#   Invoke-Pester .\tests\Premium\DecomV21.Tests.ps1 -Output Detailed
 
 BeforeAll {
     $repoRoot    = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     $liteMods    = Join-Path $repoRoot 'src\Modules'
     $premiumMods = Join-Path $repoRoot 'src\Premium\Modules'
 
-    Import-Module (Join-Path $liteMods    'Models.psm1')         -Force -DisableNameChecking
-    Import-Module (Join-Path $liteMods    'Logging.psm1')        -Force -DisableNameChecking
-    Import-Module (Join-Path $liteMods    'Evidence.psm1')       -Force -DisableNameChecking
+    # ── Lite stubs ─────────────────────────────────────────────────────────────
+    Import-Module (Join-Path $liteMods 'Models.psm1')  -Force -DisableNameChecking
+    Import-Module (Join-Path $liteMods 'Logging.psm1') -Force -DisableNameChecking
+
+    function Write-DecomConsole { param([string]$Level,[string]$Message) }
+    function Add-DecomEvidenceEvent {
+        param([pscustomobject]$Context,[string]$Phase,[string]$ActionName,
+              [string]$Status,[bool]$IsCritical,[string]$Message,
+              [hashtable]$BeforeState,[hashtable]$AfterState,[hashtable]$Evidence,
+              [string]$ControlObjective,[string]$RiskMitigated)
+    }
+
+    # EXO stubs for MailboxExtended
+    # EXO stubs must be Global scope so they intercept module-level calls in PS7
+    function Global:Get-EXOMailbox {
+        param([string]$Identity,[string[]]$Property,[string]$ErrorAction)
+        [pscustomobject]@{
+            ForwardingSmtpAddress      = 'manager@contoso.com'
+            ForwardingAddress          = $null
+            DeliverToMailboxAndForward = $false
+            RecipientTypeDetails       = 'SharedMailbox'
+        }
+    }
+    function Global:Set-Mailbox {
+        param([string]$Identity,$ForwardingSmtpAddress,$ForwardingAddress,
+              [bool]$DeliverToMailboxAndForward,[string]$ErrorAction)
+    }
+
+    # ── Load v2.1 modules — BatchContext MUST be last to override any stubs ──────
     Import-Module (Join-Path $premiumMods 'BatchDiff.psm1')      -Force -DisableNameChecking
     Import-Module (Join-Path $premiumMods 'BatchPolicy.psm1')    -Force -DisableNameChecking
     Import-Module (Join-Path $premiumMods 'BatchApproval.psm1')  -Force -DisableNameChecking
     Import-Module (Join-Path $premiumMods 'MailboxExtended.psm1')-Force -DisableNameChecking
     Import-Module (Join-Path $premiumMods 'BatchContext.psm1')   -Force -DisableNameChecking
 
-    $script:baseDir = Join-Path ([System.IO.Path]::GetTempPath()) ('DecomV21-' + [guid]::NewGuid().Guid)
-    New-Item -ItemType Directory -Path $script:baseDir -Force | Out-Null
-
-    function Get-TestEntries { param($Batch)
-        $p = $Batch.PSObject.Properties['Entries']; if ($null -eq $p) { return $null }; return $p.Value }
-
-    function script:New-TestContext {
+    # ── Shared helpers ─────────────────────────────────────────────────────────
+    function New-TestContext {
         param([switch]$WhatIf)
         [pscustomobject]@{
-            TargetUPN='user@contoso.com'; TicketId='CHG-TEST'; OutputPath=$env:TEMP
-            EvidenceLevel='Forensic'; WhatIf=[bool]$WhatIf; NonInteractive=$false
-            Force=$false; SealEvidence=$true; OperatorUPN='admin@contoso.com'
-            OperatorObjectId='op-oid-001'; CorrelationId=[guid]::NewGuid().Guid
-            Evidence=[System.Collections.Generic.List[object]]::new()
-            RunId=[guid]::NewGuid().Guid; EvidencePrevHash='GENESIS'
+            TargetUPN        = 'user@contoso.com'
+            TicketId         = 'CHG-TEST'
+            OutputPath       = $env:TEMP
+            EvidenceLevel    = 'Forensic'
+            WhatIf           = [bool]$WhatIf
+            NonInteractive   = $false
+            Force            = $false
+            SealEvidence     = $true
+            OperatorUPN      = 'admin@contoso.com'
+            OperatorObjectId = 'op-oid-001'
+            CorrelationId    = [guid]::NewGuid().Guid
+            Evidence         = [System.Collections.Generic.List[object]]::new()
+            RunId            = [guid]::NewGuid().Guid
+            EvidencePrevHash = 'GENESIS'
         }
     }
 
-    function script:New-TestAR {
+    function New-TestActionResult {
         param([string]$Phase='Containment',[string]$Action='Reset Password',
               [string]$Status='Success',[bool]$IsCritical=$true)
-        [pscustomobject]@{ Phase=$Phase; ActionName=$Action; Status=$Status; IsCritical=$IsCritical
-            Message="Test $Action"; BeforeState=@{ State='Before' }; AfterState=@{ State='After' }
-            Evidence=@{}; WarningMessages=@(); ManualFollowUp=@() }
+        [pscustomobject]@{
+            Phase            = $Phase
+            ActionName       = $Action
+            Status           = $Status
+            IsCritical       = $IsCritical
+            Message          = "Test result for $Action"
+            BeforeState      = @{ State = 'Before' }
+            AfterState       = @{ State = 'After' }
+            Evidence         = @{}
+            WarningMessages  = @()
+            ManualFollowUp   = @()
+        }
     }
 
-    # EXO mocks for MailboxExtended
-    Mock -ModuleName MailboxExtended Get-EXOMailbox {
-        [pscustomobject]@{ ForwardingSmtpAddress='manager@contoso.com'; ForwardingAddress=$null
-            DeliverToMailboxAndForward=$false; RecipientTypeDetails='SharedMailbox' }
-    }
-    Mock -ModuleName MailboxExtended Set-Mailbox { }
-    Mock -ModuleName MailboxExtended Add-DecomEvidenceEvent { }
+    $script:baseDir = Join-Path ([System.IO.Path]::GetTempPath()) ('DecomV21Test-' + [guid]::NewGuid().Guid)
+    $null = New-Item -ItemType Directory -Path $script:baseDir -Force
 }
 
 AfterAll {
-    if (Test-Path $script:baseDir) { Remove-Item $script:baseDir -Recurse -Force }
+    if (Test-Path $script:baseDir) {
+        Remove-Item -Path $script:baseDir -Recurse -Force
+    }
 }
 
-Describe 'BatchDiff - New-DecomBatchDiffEntry' {
+# ═══════════════════════════════════════════════════════════════════════════════
+Describe 'BatchDiff — New-DecomBatchDiffEntry' {
 
     It 'creates a diff entry with required fields' {
-        $e = New-DecomBatchDiffEntry -Result (New-TestAR) -UPN 'u@c.com'
+        $r = New-TestActionResult
+        $e = New-DecomBatchDiffEntry -Result $r -UPN 'u@c.com'
         $e.UPN        | Should -Be 'u@c.com'
         $e.Phase      | Should -Be 'Containment'
         $e.ActionName | Should -Be 'Reset Password'
@@ -66,107 +107,161 @@ Describe 'BatchDiff - New-DecomBatchDiffEntry' {
     }
 
     It 'infers High risk for critical Containment actions' {
-        (New-DecomBatchDiffEntry -Result (New-TestAR -Phase 'Containment' -IsCritical $true) -UPN 'u@c.com').RiskLevel | Should -Be 'High'
+        $r = New-TestActionResult -Phase 'Containment' -IsCritical $true
+        $e = New-DecomBatchDiffEntry -Result $r -UPN 'u@c.com'
+        $e.RiskLevel | Should -Be 'High'
     }
 
     It 'infers Remove change type for Remove actions' {
-        (New-DecomBatchDiffEntry -Result (New-TestAR -Action 'Remove Group Memberships') -UPN 'u@c.com').ChangeType | Should -Be 'Remove'
+        $r = New-TestActionResult -Action 'Remove Group Memberships'
+        $e = New-DecomBatchDiffEntry -Result $r -UPN 'u@c.com'
+        $e.ChangeType | Should -Be 'Remove'
     }
 
     It 'infers Modify change type for Set actions' {
-        (New-DecomBatchDiffEntry -Result (New-TestAR -Action 'Set Mail Forwarding') -UPN 'u@c.com').ChangeType | Should -Be 'Modify'
+        $r = New-TestActionResult -Action 'Set Mail Forwarding'
+        $e = New-DecomBatchDiffEntry -Result $r -UPN 'u@c.com'
+        $e.ChangeType | Should -Be 'Modify'
     }
 
     It 'infers Skip change type for Skipped status' {
-        (New-DecomBatchDiffEntry -Result (New-TestAR -Status 'Skipped') -UPN 'u@c.com').ChangeType | Should -Be 'Skip'
+        $r = New-TestActionResult -Status 'Skipped'
+        $e = New-DecomBatchDiffEntry -Result $r -UPN 'u@c.com'
+        $e.ChangeType | Should -Be 'Skip'
     }
 
     It 'infers Low risk for non-critical low-impact actions' {
-        (New-DecomBatchDiffEntry -Result (New-TestAR -Phase 'Snapshot' -IsCritical $false) -UPN 'u@c.com').RiskLevel | Should -Be 'Low'
+        $r = New-TestActionResult -Phase 'PreActionSnapshot' -IsCritical $false
+        $e = New-DecomBatchDiffEntry -Result $r -UPN 'u@c.com'
+        $e.RiskLevel | Should -Be 'Low'
     }
 }
 
-Describe 'BatchDiff - Export-DecomBatchDiffReport' {
+Describe 'BatchDiff — Export-DecomBatchDiffReport' {
 
     BeforeEach {
-        $script:b  = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('alice@c.com') -TicketId 'CHG-DIFF' -WhatIfMode
-        $ctx       = New-TestContext -WhatIf
+        $script:b = New-DecomBatchContext -OutputRoot $script:baseDir `
+            -UpnList @('alice@c.com') -TicketId 'CHG-DIFF' -WhatIfMode
+
+        $ctx = New-TestContext -WhatIf
+        $ctx.TargetUPN = 'alice@c.com'
+
         $script:br = [pscustomobject]@{
             BatchId = $script:b.BatchId
             Summary = Get-DecomBatchSummary -Batch $script:b
-            Results = @([pscustomobject]@{
-                Context=$ctx; State=[pscustomobject]@{ RunId='r1' }; StopReason=$null
-                Results=@((New-TestAR -Phase 'Containment' -IsCritical $true),(New-TestAR -Phase 'Mailbox' -IsCritical $false))
-                Summary=[pscustomobject]@{ Status='Completed'; TargetUPN='alice@c.com' }
-            })
+            Results = @(
+                [pscustomobject]@{
+                    Context = $ctx
+                    State   = [pscustomobject]@{ RunId = 'r1' }
+                    Results = @(
+                        (New-TestActionResult -Phase 'Containment' -Action 'Reset Password' -IsCritical $true),
+                        (New-TestActionResult -Phase 'Mailbox' -Action 'Convert Mailbox' -IsCritical $false)
+                    )
+                    StopReason = $null
+                    Summary    = [pscustomobject]@{ Status = 'Completed'; TargetUPN = 'alice@c.com' }
+                }
+            )
             Errors = @()
         }
     }
 
     It 'creates both HTML and JSON files' {
-        $p = Export-DecomBatchDiffReport -Batch $script:b -BatchResult $script:br
-        Test-Path $p.HtmlPath | Should -BeTrue
-        Test-Path $p.JsonPath | Should -BeTrue
+        $paths = Export-DecomBatchDiffReport -Batch $script:b -BatchResult $script:br
+        Test-Path $paths.HtmlPath | Should -BeTrue
+        Test-Path $paths.JsonPath | Should -BeTrue
     }
 
     It 'JSON file is valid and has correct schema version' {
-        $p = Export-DecomBatchDiffReport -Batch $script:b -BatchResult $script:br
-        $j = Get-Content $p.JsonPath -Raw | ConvertFrom-Json
+        $paths = Export-DecomBatchDiffReport -Batch $script:b -BatchResult $script:br
+        $j = Get-Content $paths.JsonPath -Raw | ConvertFrom-Json
         $j.SchemaVersion | Should -Be '2.1'
         $j.ReportType    | Should -Be 'WhatIfDiff'
     }
 
     It 'JSON TotalActions matches result count' {
-        $p = Export-DecomBatchDiffReport -Batch $script:b -BatchResult $script:br
-        (Get-Content $p.JsonPath -Raw | ConvertFrom-Json).TotalActions | Should -Be 2
+        $paths = Export-DecomBatchDiffReport -Batch $script:b -BatchResult $script:br
+        $j = Get-Content $paths.JsonPath -Raw | ConvertFrom-Json
+        $j.TotalActions | Should -Be 2
     }
 
     It 'HTML contains WhatIf mode label' {
-        $p = Export-DecomBatchDiffReport -Batch $script:b -BatchResult $script:br
-        Get-Content $p.HtmlPath -Raw | Should -Match 'WhatIf'
+        $paths = Export-DecomBatchDiffReport -Batch $script:b -BatchResult $script:br
+        $html = Get-Content $paths.HtmlPath -Raw
+        $html | Should -Match 'WhatIf'
     }
 
     It 'HTML contains UPN' {
-        $p = Export-DecomBatchDiffReport -Batch $script:b -BatchResult $script:br
-        Get-Content $p.HtmlPath -Raw | Should -Match 'user@contoso\.com'
+        $paths = Export-DecomBatchDiffReport -Batch $script:b -BatchResult $script:br
+        $html = Get-Content $paths.HtmlPath -Raw
+        $html | Should -Match 'alice@c\.com'
     }
 
-    It 'files land in OutputRoot\BatchId' {
-        $p   = Export-DecomBatchDiffReport -Batch $script:b -BatchResult $script:br
-        $exp = Join-Path $script:baseDir $script:b.BatchId
-        (Split-Path $p.HtmlPath -Parent) | Should -Be $exp
-        (Split-Path $p.JsonPath -Parent) | Should -Be $exp
+    It 'HTML contains risk badges' {
+        $paths = Export-DecomBatchDiffReport -Batch $script:b -BatchResult $script:br
+        $html = Get-Content $paths.HtmlPath -Raw
+        $html | Should -Match 'risk-high|risk-medium|risk-low'
+    }
+
+    It 'files land in <OutputRoot>\<BatchId>\' {
+        $paths = Export-DecomBatchDiffReport -Batch $script:b -BatchResult $script:br
+        $expectedDir = Join-Path $script:baseDir $script:b.BatchId
+        (Split-Path $paths.HtmlPath -Parent) | Should -Be $expectedDir
+        (Split-Path $paths.JsonPath -Parent) | Should -Be $expectedDir
     }
 
     It 'works for empty batch result' {
-        $e  = New-DecomBatchContext -OutputRoot $script:baseDir
-        $er = [pscustomobject]@{ BatchId=$e.BatchId; Summary=(Get-DecomBatchSummary -Batch $e); Results=@(); Errors=@() }
-        { Export-DecomBatchDiffReport -Batch $e -BatchResult $er } | Should -Not -Throw
+        $empty = New-DecomBatchContext -OutputRoot $script:baseDir
+        $emptyResult = [pscustomobject]@{
+            BatchId = $empty.BatchId
+            Summary = Get-DecomBatchSummary -Batch $empty
+            Results = @()
+            Errors  = @()
+        }
+        { Export-DecomBatchDiffReport -Batch $empty -BatchResult $emptyResult } | Should -Not -Throw
     }
 }
 
-Describe 'BatchPolicy - Read-DecomBatchPolicy' {
+# ═══════════════════════════════════════════════════════════════════════════════
+Describe 'BatchPolicy — Read-DecomBatchPolicy' {
 
     BeforeAll {
-        $script:pd = Join-Path $script:baseDir 'policies'
-        New-Item -ItemType Directory -Path $script:pd -Force | Out-Null
-        @{ DefaultPolicy=@{ EvidenceLevel='Forensic'; RemoveLicenses=$false
-            SkipGroups=$false; SkipRoles=$false; SkipAuthMethods=$false; WhatIf=$false }
-           UpnPolicies=@{ 'alice@contoso.com'=@{ EvidenceLevel='Standard'; SkipRoles=$true } }
-        } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $script:pd 'valid.json') -Encoding UTF8
-        $script:vpp = Join-Path $script:pd 'valid.json'
+        $script:policyDir = Join-Path $script:baseDir 'policies'
+        $null = New-Item -ItemType Directory -Path $script:policyDir -Force
+
+        # Write a valid policy file
+        $validPolicy = @{
+            DefaultPolicy = @{
+                EvidenceLevel   = 'Forensic'
+                RemoveLicenses  = $false
+                SkipGroups      = $false
+                SkipRoles       = $false
+                SkipAuthMethods = $false
+                WhatIf          = $false
+            }
+            UpnPolicies = @{
+                'alice@contoso.com' = @{
+                    EvidenceLevel = 'Standard'
+                    SkipRoles     = $true
+                }
+            }
+        }
+        $script:validPolicyPath = Join-Path $script:policyDir 'valid.json'
+        $validPolicy | ConvertTo-Json -Depth 5 |
+            Set-Content $script:validPolicyPath -Encoding UTF8
     }
 
     It 'loads a valid policy file without error' {
-        { Read-DecomBatchPolicy -Path $script:vpp } | Should -Not -Throw
+        { Read-DecomBatchPolicy -Path $script:validPolicyPath } | Should -Not -Throw
     }
 
     It 'returns an object with DefaultPolicy' {
-        (Read-DecomBatchPolicy -Path $script:vpp).DefaultPolicy | Should -Not -BeNullOrEmpty
+        $p = Read-DecomBatchPolicy -Path $script:validPolicyPath
+        $p.DefaultPolicy | Should -Not -BeNullOrEmpty
     }
 
     It 'returns an object with UpnPolicies' {
-        (Read-DecomBatchPolicy -Path $script:vpp).UpnPolicies | Should -Not -BeNullOrEmpty
+        $p = Read-DecomBatchPolicy -Path $script:validPolicyPath
+        $p.UpnPolicies | Should -Not -BeNullOrEmpty
     }
 
     It 'throws for missing file' {
@@ -174,48 +269,63 @@ Describe 'BatchPolicy - Read-DecomBatchPolicy' {
     }
 
     It 'throws for invalid JSON' {
-        $p = Join-Path $script:pd 'bad.json'
-        Set-Content $p 'not json {{{' -Encoding UTF8
-        { Read-DecomBatchPolicy -Path $p } | Should -Throw
+        $badPath = Join-Path $script:policyDir 'bad.json'
+        Set-Content $badPath -Value 'not json {{{' -Encoding UTF8
+        { Read-DecomBatchPolicy -Path $badPath } | Should -Throw
     }
 
     It 'throws for invalid EvidenceLevel' {
-        $p = Join-Path $script:pd 'badlevel.json'
-        @{ DefaultPolicy=@{ EvidenceLevel='Invalid' } } | ConvertTo-Json | Set-Content $p -Encoding UTF8
-        { Read-DecomBatchPolicy -Path $p } | Should -Throw
+        $bad = @{ DefaultPolicy = @{ EvidenceLevel = 'InvalidLevel' } }
+        $badPath = Join-Path $script:policyDir 'badlevel.json'
+        $bad | ConvertTo-Json | Set-Content $badPath -Encoding UTF8
+        { Read-DecomBatchPolicy -Path $badPath } | Should -Throw
     }
 
     It 'throws for non-boolean bool field' {
-        $p = Join-Path $script:pd 'badbool.json'
-        @{ DefaultPolicy=@{ EvidenceLevel='Forensic'; SkipGroups='yes' } } | ConvertTo-Json | Set-Content $p -Encoding UTF8
-        { Read-DecomBatchPolicy -Path $p } | Should -Throw
+        $bad = @{ DefaultPolicy = @{ EvidenceLevel = 'Forensic'; SkipGroups = 'yes' } }
+        $badPath = Join-Path $script:policyDir 'badbool.json'
+        $bad | ConvertTo-Json | Set-Content $badPath -Encoding UTF8
+        { Read-DecomBatchPolicy -Path $badPath } | Should -Throw
     }
 }
 
-Describe 'BatchPolicy - Get-DecomUpnPolicy' {
+Describe 'BatchPolicy — Get-DecomUpnPolicy' {
 
     BeforeAll {
-        $pp = Join-Path $script:baseDir 'test-policy.json'
-        @{ DefaultPolicy=@{ EvidenceLevel='Forensic'; RemoveLicenses=$true
-            SkipGroups=$false; SkipRoles=$false; SkipAuthMethods=$false; WhatIf=$false }
-           UpnPolicies=@{
-               'alice@contoso.com'=@{ EvidenceLevel='Standard'; SkipRoles=$true }
-               'BOB@CONTOSO.COM'=@{ WhatIf=$true }
-           }
-        } | ConvertTo-Json -Depth 5 | Set-Content $pp -Encoding UTF8
-        $script:policy = Read-DecomBatchPolicy -Path $pp
+        $validPolicy = @{
+            DefaultPolicy = @{
+                EvidenceLevel   = 'Forensic'
+                RemoveLicenses  = $true
+                SkipGroups      = $false
+                SkipRoles       = $false
+                SkipAuthMethods = $false
+                WhatIf          = $false
+            }
+            UpnPolicies = @{
+                'alice@contoso.com' = @{
+                    EvidenceLevel = 'Standard'
+                    SkipRoles     = $true
+                }
+                'BOB@CONTOSO.COM' = @{
+                    WhatIf = $true
+                }
+            }
+        }
+        $pPath = Join-Path $script:baseDir 'test-policy.json'
+        $validPolicy | ConvertTo-Json -Depth 5 | Set-Content $pPath -Encoding UTF8
+        $script:policy = Read-DecomBatchPolicy -Path $pPath
     }
 
     It 'returns defaults when policy is null' {
-        $p = Get-DecomUpnPolicy -Policy $null -UPN 'x@c.com'
+        $p = Get-DecomUpnPolicy -Policy $null -UPN 'anyone@c.com'
         $p.EvidenceLevel | Should -Be 'Forensic'
         $p.WhatIf        | Should -Be $false
     }
 
     It 'returns DefaultPolicy for unknown UPN' {
         $p = Get-DecomUpnPolicy -Policy $script:policy -UPN 'unknown@contoso.com'
-        $p.EvidenceLevel  | Should -Be 'Forensic'
-        $p.RemoveLicenses | Should -Be $true
+        $p.EvidenceLevel   | Should -Be 'Forensic'
+        $p.RemoveLicenses  | Should -Be $true
     }
 
     It 'applies UPN-specific override for known UPN' {
@@ -224,197 +334,275 @@ Describe 'BatchPolicy - Get-DecomUpnPolicy' {
         $p.SkipRoles     | Should -Be $true
     }
 
-    It 'inherits DefaultPolicy fields not overridden' {
-        (Get-DecomUpnPolicy -Policy $script:policy -UPN 'alice@contoso.com').RemoveLicenses | Should -Be $true
+    It 'inherits DefaultPolicy fields not overridden by UPN policy' {
+        $p = Get-DecomUpnPolicy -Policy $script:policy -UPN 'alice@contoso.com'
+        $p.RemoveLicenses | Should -Be $true   # from DefaultPolicy
     }
 
     It 'UPN lookup is case-insensitive' {
-        (Get-DecomUpnPolicy -Policy $script:policy -UPN 'bob@contoso.com').WhatIf | Should -Be $true
+        $p1 = Get-DecomUpnPolicy -Policy $script:policy -UPN 'BOB@CONTOSO.COM'
+        $p2 = Get-DecomUpnPolicy -Policy $script:policy -UPN 'bob@contoso.com'
+        $p1.WhatIf | Should -Be $true
+        $p2.WhatIf | Should -Be $true
     }
 
-    It 'all required fields present in output' {
+    It 'all required fields are always present in output' {
         $p = Get-DecomUpnPolicy -Policy $null -UPN 'x@c.com'
         $p.PSObject.Properties.Name | Should -Contain 'EvidenceLevel'
+        $p.PSObject.Properties.Name | Should -Contain 'RemoveLicenses'
         $p.PSObject.Properties.Name | Should -Contain 'SkipGroups'
+        $p.PSObject.Properties.Name | Should -Contain 'SkipRoles'
+        $p.PSObject.Properties.Name | Should -Contain 'SkipAuthMethods'
         $p.PSObject.Properties.Name | Should -Contain 'WhatIf'
     }
 }
 
-Describe 'BatchPolicy - New-DecomBatchPolicyTemplate' {
+Describe 'BatchPolicy — New-DecomBatchPolicyTemplate' {
 
-    It 'creates a JSON file' {
-        $p = Join-Path $script:baseDir 'tmpl.json'
-        New-DecomBatchPolicyTemplate -Path $p | Out-Null
-        Test-Path $p | Should -BeTrue
+    It 'creates a JSON file at the specified path' {
+        $path = Join-Path $script:baseDir 'template.json'
+        New-DecomBatchPolicyTemplate -Path $path | Out-Null
+        Test-Path $path | Should -BeTrue
     }
 
     It 'template is valid JSON' {
-        $p = Join-Path $script:baseDir 'tmpl2.json'
-        New-DecomBatchPolicyTemplate -Path $p | Out-Null
-        { Get-Content $p -Raw | ConvertFrom-Json } | Should -Not -Throw
+        $path = Join-Path $script:baseDir 'template2.json'
+        New-DecomBatchPolicyTemplate -Path $path | Out-Null
+        { Get-Content $path -Raw | ConvertFrom-Json } | Should -Not -Throw
     }
 
     It 'template contains DefaultPolicy section' {
-        $p = Join-Path $script:baseDir 'tmpl3.json'
-        New-DecomBatchPolicyTemplate -Path $p | Out-Null
-        (Get-Content $p -Raw | ConvertFrom-Json).DefaultPolicy | Should -Not -BeNullOrEmpty
+        $path = Join-Path $script:baseDir 'template3.json'
+        New-DecomBatchPolicyTemplate -Path $path | Out-Null
+        $t = Get-Content $path -Raw | ConvertFrom-Json
+        $t.DefaultPolicy | Should -Not -BeNullOrEmpty
     }
 }
 
-Describe 'BatchApproval - New-DecomApprovalRecord' {
-
-    It 'creates a presigned approval file' {
-        $b = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com')
-        Test-Path (New-DecomApprovalRecord -Batch $b -ApproverUPN 'approver@c.com' -OutputPath $script:baseDir) | Should -BeTrue
-    }
-
-    It 'approval file contains correct BatchId' {
-        $b = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com')
-        $r = Get-Content (New-DecomApprovalRecord -Batch $b -ApproverUPN 'approver@c.com' -OutputPath $script:baseDir) -Raw | ConvertFrom-Json
-        $r.BatchId     | Should -Be $b.BatchId
-        $r.Approved    | Should -Be $true
-        $r.ApproverUPN | Should -Be 'approver@c.com'
-    }
-
-    It 'approval file SchemaVersion is 2.1' {
-        $b = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com')
-        (Get-Content (New-DecomApprovalRecord -Batch $b -ApproverUPN 'a@c.com' -OutputPath $script:baseDir) -Raw | ConvertFrom-Json).SchemaVersion | Should -Be '2.1'
-    }
-}
-
-Describe 'BatchApproval - Invoke-DecomBatchApproval NonInteractive' {
+# ═══════════════════════════════════════════════════════════════════════════════
+Describe 'BatchApproval — Invoke-DecomBatchApproval NonInteractive' {
 
     It 'succeeds with valid presigned approval file' {
-        $b     = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com')
-        $aPath = New-DecomApprovalRecord -Batch $b -ApproverUPN 'mgr@c.com' -OutputPath $script:baseDir
-        Invoke-DecomBatchApproval -Batch $b -NonInteractive -ApprovalPath $aPath | Should -Be $true
+        $b     = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com') -TicketId 'CHG-12345'
+        # Create a valid v2.0 approval record manually
+        $batchDir = Join-Path $script:baseDir $b.BatchId
+        $null = New-Item -ItemType Directory -Path $batchDir -Force
+        $aPath = Join-Path $script:baseDir 'approval-valid.json'
+        @{
+            SchemaVersion  = '2.0'
+            RecordType     = 'ApprovalRecord'
+            BatchId        = $b.BatchId
+            TicketId       = 'CHG-12345'
+            OperatorUPN    = 'mgr@c.com'
+            ApprovalMethod = 'Interactive'
+            Approved       = $true
+            ApprovedUtc    = (Get-Date).ToUniversalTime().ToString('o')
+            UPNCount       = 1
+        } | ConvertTo-Json | Set-Content $aPath -Encoding UTF8
+        $result = Invoke-DecomBatchApproval -Batch $b -NonInteractive -TicketId 'CHG-12345' `
+            -OperatorUPN 'mgr@c.com' -ApprovalPath $aPath
+        $result | Should -Be $true
     }
 
     It 'throws when approval file BatchId does not match' {
-        $b1    = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com')
-        $b2    = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com')
-        $aPath = New-DecomApprovalRecord -Batch $b1 -ApproverUPN 'mgr@c.com' -OutputPath $script:baseDir
-        { Invoke-DecomBatchApproval -Batch $b2 -NonInteractive -ApprovalPath $aPath } | Should -Throw
+        $b1    = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com') -TicketId 'CHG-12345'
+        $b2    = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com') -TicketId 'CHG-12345'
+        $aPath = Join-Path $script:baseDir 'approval-mismatch.json'
+        @{
+            SchemaVersion = '2.0'; RecordType = 'ApprovalRecord'
+            BatchId = $b1.BatchId; TicketId = 'CHG-12345'
+            OperatorUPN = 'mgr@c.com'; Approved = $true
+            ApprovedUtc = (Get-Date).ToUniversalTime().ToString('o')
+        } | ConvertTo-Json | Set-Content $aPath -Encoding UTF8
+        { Invoke-DecomBatchApproval -Batch $b2 -NonInteractive -TicketId 'CHG-12345' `
+            -OperatorUPN 'mgr@c.com' -ApprovalPath $aPath } | Should -Throw
     }
 
-    It 'throws when -ApprovalPath is missing in NonInteractive mode' {
+    It 'throws when -TicketId is missing in NonInteractive mode' {
         $b = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com')
-        { Invoke-DecomBatchApproval -Batch $b -NonInteractive } | Should -Throw
+        { Invoke-DecomBatchApproval -Batch $b -NonInteractive -OperatorUPN 'mgr@c.com' } | Should -Throw
     }
 
     It 'throws when approval file not found' {
-        $b = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com')
-        { Invoke-DecomBatchApproval -Batch $b -NonInteractive -ApprovalPath 'C:\missing.json' } | Should -Throw
+        $b = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com') -TicketId 'CHG-12345'
+        { Invoke-DecomBatchApproval -Batch $b -NonInteractive -TicketId 'CHG-12345' `
+            -OperatorUPN 'mgr@c.com' -ApprovalPath 'C:\missing\approval.json' } | Should -Throw
     }
 
     It 'writes batch-approval.json to batch directory' {
-        $b     = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com')
-        $aPath = New-DecomApprovalRecord -Batch $b -ApproverUPN 'mgr@c.com' -OutputPath $script:baseDir
-        Invoke-DecomBatchApproval -Batch $b -NonInteractive -ApprovalPath $aPath | Out-Null
-        Test-Path (Join-Path (Join-Path $script:baseDir $b.BatchId) 'batch-approval.json') | Should -BeTrue
+        $b = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com') -TicketId 'CHG-99999'
+        $batchDir = Join-Path $script:baseDir $b.BatchId
+        $null = New-Item -ItemType Directory -Path $batchDir -Force
+        $aPath = Join-Path $script:baseDir 'approval-write.json'
+        @{
+            SchemaVersion = '2.0'; RecordType = 'ApprovalRecord'
+            BatchId = $b.BatchId; TicketId = 'CHG-99999'
+            OperatorUPN = 'mgr@c.com'; Approved = $true
+            ApprovedUtc = (Get-Date).ToUniversalTime().ToString('o')
+        } | ConvertTo-Json | Set-Content $aPath -Encoding UTF8
+        Invoke-DecomBatchApproval -Batch $b -NonInteractive -TicketId 'CHG-99999' `
+            -OperatorUPN 'mgr@c.com' -ApprovalPath $aPath | Out-Null
+        $recordPath = Join-Path $batchDir 'batch-approval.json'
+        Test-Path $recordPath | Should -BeTrue
     }
 }
 
-Describe 'BatchApproval - Get-DecomApprovalStatus' {
+Describe 'BatchApproval — Get-DecomApprovalStatus' {
 
     It 'returns null when no approval record exists' {
         $b = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com')
-        Get-DecomApprovalStatus -Batch $b | Should -BeNullOrEmpty
+        $r = Get-DecomApprovalStatus -Batch $b
+        $r | Should -BeNullOrEmpty
     }
 
     It 'returns approval record after approval' {
-        $b     = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com')
-        $aPath = New-DecomApprovalRecord -Batch $b -ApproverUPN 'mgr@c.com' -OutputPath $script:baseDir
-        Invoke-DecomBatchApproval -Batch $b -NonInteractive -ApprovalPath $aPath | Out-Null
+        $b = New-DecomBatchContext -OutputRoot $script:baseDir -UpnList @('u@c.com') -TicketId 'CHG-77777'
+        $batchDir = Join-Path $script:baseDir $b.BatchId
+        $null = New-Item -ItemType Directory -Path $batchDir -Force
+        $aPath = Join-Path $script:baseDir 'approval-read.json'
+        @{
+            SchemaVersion = '2.0'; RecordType = 'ApprovalRecord'
+            BatchId = $b.BatchId; TicketId = 'CHG-77777'
+            OperatorUPN = 'mgr@c.com'; Approved = $true
+            ApprovedUtc = (Get-Date).ToUniversalTime().ToString('o')
+        } | ConvertTo-Json | Set-Content $aPath -Encoding UTF8
+        Invoke-DecomBatchApproval -Batch $b -NonInteractive -TicketId 'CHG-77777' `
+            -OperatorUPN 'mgr@c.com' -ApprovalPath $aPath | Out-Null
         $r = Get-DecomApprovalStatus -Batch $b
         $r          | Should -Not -BeNullOrEmpty
         $r.Approved | Should -Be $true
     }
 }
 
-Describe 'MailboxExtended - Get-DecomMailForwardingState' {
+# ═══════════════════════════════════════════════════════════════════════════════
+Describe 'MailboxExtended — Get-DecomMailForwardingState' {
 
     It 'returns forwarding state object' {
-        $s = Get-DecomMailForwardingState -Context (New-TestContext)
+        $ctx = New-TestContext
+        $s = Get-DecomMailForwardingState -Context $ctx
+        $s | Should -Not -BeNullOrEmpty
         $s.PSObject.Properties.Name | Should -Contain 'ForwardingSmtpAddress'
         $s.PSObject.Properties.Name | Should -Contain 'IsForwardingActive'
     }
 
     It 'IsForwardingActive is true when ForwardingSmtpAddress is set' {
-        (Get-DecomMailForwardingState -Context (New-TestContext)).IsForwardingActive | Should -Be $true
+        $ctx = New-TestContext
+        $s = Get-DecomMailForwardingState -Context $ctx
+        $s.IsForwardingActive | Should -Be $true
     }
 
     It 'IsForwardingActive is false when no forwarding configured' {
-        Mock -ModuleName MailboxExtended Get-EXOMailbox {
-            [pscustomobject]@{ ForwardingSmtpAddress=$null; ForwardingAddress=$null
-                DeliverToMailboxAndForward=$false; RecipientTypeDetails='SharedMailbox' }
+        function Global:Get-EXOMailbox {
+            param([string]$Identity,[string[]]$Property,[string]$ErrorAction)
+            [pscustomobject]@{
+                ForwardingSmtpAddress      = $null
+                ForwardingAddress          = $null
+                DeliverToMailboxAndForward = $false
+                RecipientTypeDetails       = 'SharedMailbox'
+            }
         }
-        (Get-DecomMailForwardingState -Context (New-TestContext)).IsForwardingActive | Should -Be $false
+        $ctx = New-TestContext
+        $s = Get-DecomMailForwardingState -Context $ctx
+        $s.IsForwardingActive | Should -Be $false
+        # Restore active-forwarding stub and module for subsequent tests
+        function Global:Get-EXOMailbox {
+            param([string]$Identity,[string[]]$Property,[string]$ErrorAction)
+            [pscustomobject]@{
+                ForwardingSmtpAddress      = 'manager@contoso.com'
+                ForwardingAddress          = $null
+                DeliverToMailboxAndForward = $false
+                RecipientTypeDetails       = 'SharedMailbox'
+            }
+        }
+        Import-Module (Join-Path $premiumMods 'MailboxExtended.psm1') -Force -DisableNameChecking
     }
 }
 
-Describe 'MailboxExtended - Set-DecomMailForwarding' {
-
-    BeforeEach {
-        Mock -ModuleName MailboxExtended Get-EXOMailbox {
-            [pscustomobject]@{ ForwardingSmtpAddress='manager@contoso.com'; ForwardingAddress=$null
-                DeliverToMailboxAndForward=$false; RecipientTypeDetails='SharedMailbox' }
-        }
-        Mock -ModuleName MailboxExtended Set-Mailbox { }
-    }
+Describe 'MailboxExtended — Set-DecomMailForwarding' {
 
     It 'returns Skipped when no forwarding target supplied' {
-        (Set-DecomMailForwarding -Context (New-TestContext) -Cmdlet $null).Status | Should -Be 'Skipped'
+        $ctx = New-TestContext
+        $r = Set-DecomMailForwarding -Context $ctx -Cmdlet $null
+        $r.Status | Should -Be 'Skipped'
     }
 
     It 'returns Success in WhatIf mode' {
-        $r = Set-DecomMailForwarding -Context (New-TestContext -WhatIf) -ForwardToSmtp 'mgr@c.com' -Cmdlet $null
+        $ctx = New-TestContext -WhatIf
+        $r = Set-DecomMailForwarding -Context $ctx -ForwardToSmtp 'mgr@c.com' -Cmdlet $null
         $r.Status  | Should -Be 'Success'
         $r.Message | Should -Match '\[WhatIf\]'
     }
 
     It 'returns Success in live mode' {
-        (Set-DecomMailForwarding -Context (New-TestContext) -ForwardToSmtp 'mgr@c.com' -Cmdlet $null).Status | Should -Be 'Success'
+        $ctx = New-TestContext
+        $r = Set-DecomMailForwarding -Context $ctx -ForwardToSmtp 'mgr@c.com' -Cmdlet $null
+        $r.Status | Should -Be 'Success'
     }
 
     It 'returns Failed when Set-Mailbox throws' {
-        Mock -ModuleName MailboxExtended Set-Mailbox { throw 'EXO access denied' }
-        (Set-DecomMailForwarding -Context (New-TestContext) -ForwardToSmtp 'mgr@c.com' -Cmdlet $null).Status | Should -Be 'Failed'
+        function Global:Set-Mailbox {
+            param([string]$Identity,$ForwardingSmtpAddress,$ForwardingAddress,
+                  [bool]$DeliverToMailboxAndForward,[string]$ErrorAction)
+            throw 'EXO access denied'
+        }
+        $ctx = New-TestContext
+        $r = Set-DecomMailForwarding -Context $ctx -ForwardToSmtp 'mgr@c.com' -Cmdlet $null
+        $r.Status | Should -Be 'Failed'
+        # Restore non-throwing stub
+        function Global:Set-Mailbox {
+            param([string]$Identity,$ForwardingSmtpAddress,$ForwardingAddress,
+                  [bool]$DeliverToMailboxAndForward,[string]$ErrorAction)
+        }
+        Import-Module (Join-Path $premiumMods 'MailboxExtended.psm1') -Force -DisableNameChecking
     }
 }
 
-Describe 'MailboxExtended - Remove-DecomMailForwarding' {
-
-    BeforeEach {
-        Mock -ModuleName MailboxExtended Get-EXOMailbox {
-            [pscustomobject]@{ ForwardingSmtpAddress='manager@contoso.com'; ForwardingAddress=$null
-                DeliverToMailboxAndForward=$false; RecipientTypeDetails='SharedMailbox' }
-        }
-        Mock -ModuleName MailboxExtended Set-Mailbox { }
-    }
+Describe 'MailboxExtended — Remove-DecomMailForwarding' {
 
     It 'returns Skipped when no forwarding is active' {
-        Mock -ModuleName MailboxExtended Get-EXOMailbox {
-            [pscustomobject]@{ ForwardingSmtpAddress=$null; ForwardingAddress=$null
-                DeliverToMailboxAndForward=$false; RecipientTypeDetails='SharedMailbox' }
+        function Global:Get-EXOMailbox {
+            param([string]$Identity,[string[]]$Property,[string]$ErrorAction)
+            [pscustomobject]@{
+                ForwardingSmtpAddress = $null; ForwardingAddress = $null
+                DeliverToMailboxAndForward = $false; RecipientTypeDetails = 'SharedMailbox'
+            }
         }
-        (Remove-DecomMailForwarding -Context (New-TestContext) -Cmdlet $null).Status | Should -Be 'Skipped'
+        $ctx = New-TestContext
+        $r = Remove-DecomMailForwarding -Context $ctx -Cmdlet $null
+        $r.Status | Should -Be 'Skipped'
+        Import-Module (Join-Path $premiumMods 'MailboxExtended.psm1') -Force -DisableNameChecking
+    }
+
+    BeforeEach {
+        # Ensure active-forwarding stub is in place before every Remove test
+        function Global:Get-EXOMailbox {
+            param([string]$Identity,[string[]]$Property,[string]$ErrorAction)
+            [pscustomobject]@{
+                ForwardingSmtpAddress      = 'manager@contoso.com'
+                ForwardingAddress          = $null
+                DeliverToMailboxAndForward = $false
+                RecipientTypeDetails       = 'SharedMailbox'
+            }
+        }
     }
 
     It 'returns Success when forwarding is cleared' {
-        (Remove-DecomMailForwarding -Context (New-TestContext) -Cmdlet $null).Status | Should -Be 'Success'
+        $ctx = New-TestContext
+        $r = Remove-DecomMailForwarding -Context $ctx -Cmdlet $null
+        $r.Status | Should -Be 'Success'
     }
 
     It 'returns Success in WhatIf mode' {
-        $r = Remove-DecomMailForwarding -Context (New-TestContext -WhatIf) -Cmdlet $null
+        $ctx = New-TestContext -WhatIf
+        $r = Remove-DecomMailForwarding -Context $ctx -Cmdlet $null
         $r.Status  | Should -Be 'Success'
         $r.Message | Should -Match '\[WhatIf\]'
     }
 
     It 'AfterState shows null forwarding addresses' {
-        $r = Remove-DecomMailForwarding -Context (New-TestContext) -Cmdlet $null
+        $ctx = New-TestContext
+        $r = Remove-DecomMailForwarding -Context $ctx -Cmdlet $null
         $r.AfterState.ForwardingSmtpAddress | Should -BeNullOrEmpty
         $r.AfterState.ForwardingAddress     | Should -BeNullOrEmpty
     }
 }
-

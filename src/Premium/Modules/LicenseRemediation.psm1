@@ -64,12 +64,12 @@ function Get-DecomLicenseState {
             -ErrorAction Stop
 
         # Separate direct assignments from group-based
-        $directSkus = $user.AssignedLicenses | Where-Object { $_.SkuId }
+        $directSkus = @($user.AssignedLicenses | Where-Object { $_.SkuId })
 
         $groupBased = @()
         $direct     = @()
 
-        if ($user.LicenseAssignmentStates) {
+        if ($null -ne $user.LicenseAssignmentStates) {
             $groupBased = @($user.LicenseAssignmentStates |
                 Where-Object { $_.AssignedByGroup -ne $null } |
                 Select-Object -ExpandProperty SkuId)

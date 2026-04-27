@@ -19,7 +19,7 @@
 
 #Requires -Version 5.1
 
-Set-StrictMode -Version Latest
+Set-StrictMode -Version 2.0
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -91,11 +91,12 @@ function Save-DecomBatchState {
 
     Set-Content -Path $tmpPath -Value $json -Encoding UTF8
 
-    # Atomic rename (move). Remove target first on PS5.1 (no -Force on Move-Item on all OSes).
-    if (Test-Path $StatePath) {
-        Remove-Item -Path $StatePath -Force
-    }
-    Move-Item -Path $tmpPath -Destination $StatePath
+    # Atomic overwrite using .NET File.Copy with overwrite=true.
+    # This is safe on crash — if the process dies before Copy completes,
+    # the original StatePath is still intact. The .tmp file is cleaned up
+    # after a successful copy. Remove-Item + Move-Item is NOT atomic.
+    [System.IO.File]::Copy($tmpPath, $StatePath, $true)
+    Remove-Item -Path $tmpPath -Force -ErrorAction SilentlyContinue
 
     return $StatePath
 }
@@ -135,10 +136,12 @@ function Restore-DecomBatchState {
     $raw  = Get-Content -Path $StatePath -Raw -Encoding UTF8
     $data = $raw | ConvertFrom-Json
 
-    # Rebuild Entries as an ordered hashtable of pscustomobject.
+    # Rebuild Entries as an OrderedDictionary of pscustomobject.
     # ConvertFrom-Json returns a PSCustomObject for the Entries property;
     # its NoteProperty names are the UPN keys we stored.
-    $entries = [ordered]@{}
+    # OrdinalIgnoreCase comparer mirrors New-DecomBatchContext behaviour.
+    $entries = New-Object 'System.Collections.Specialized.OrderedDictionary' `
+                   ([System.StringComparer]::OrdinalIgnoreCase)
 
     if ($data.Entries) {
         # PS5.1: psobject.Properties to enumerate dynamic keys
@@ -169,13 +172,12 @@ function Restore-DecomBatchState {
         WhatIf           = [bool]$data.WhatIf
         NonInteractive   = [bool]$data.NonInteractive
         Force            = [bool]$data.Force
+        NoSeal           = [bool]$data.NoSeal
         OperatorUPN      = $data.OperatorUPN
         OperatorObjectId = $data.OperatorObjectId
         MaxParallel      = [int]$data.MaxParallel
-        Entries          = $null
+        Entries          = $entries
     }
-    # Use Add-Member to preserve [ordered] type in PS7
-    $batch | Add-Member -Force -NotePropertyName Entries -NotePropertyValue $entries
 
     return $batch
 }

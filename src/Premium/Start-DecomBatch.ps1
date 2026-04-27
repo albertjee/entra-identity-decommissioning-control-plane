@@ -15,7 +15,7 @@
 #   <RepoRoot>\output\<BatchId>\<sanitised-upn>\report.html
 #   <RepoRoot>\output\<BatchId>\batch-state.json
 #
-# PS7 compatible (v2.1). Parallel execution requires PS7.
+# PS7 compatible (v2.0). Sequential execution only in v2.0. Parallel is a v2.x feature.
 
 #Requires -Version 7.0
 
@@ -72,10 +72,6 @@ param(
     [Parameter(ParameterSetName = 'Resume')]
     [switch]$RequireApproval,
 
-    [Parameter(ParameterSetName = 'New')]
-    [Parameter(ParameterSetName = 'Resume')]
-    [switch]$Parallel,
-
     # ── Resume params ──────────────────────────────────────────────────────────
     [Parameter(ParameterSetName = 'Resume', Mandatory)]
     [ValidateScript({ Test-Path $_ })]
@@ -111,7 +107,7 @@ foreach ($mod in $liteModuleOrder) {
 . $LiteWorkflow
 
 # ── Import Premium modules ────────────────────────────────────────────────────
-$premiumModuleOrder = @('BatchContext','BatchState','BatchOrchestrator','BatchReporting','AccessRemoval','BatchDiff','BatchPolicy','BatchApproval','MailboxExtended','BatchOrchestratorParallel')
+$premiumModuleOrder = @('BatchContext','BatchState','BatchApproval','BatchPolicy','AccessRemoval','MailboxExtended','ComplianceRemediation','LicenseRemediation','DeviceRemediation','AppOwnership','AzureRBAC','BatchDiff','BatchReporting','BatchOrchestrator','BatchOrchestratorParallel')
 foreach ($mod in $premiumModuleOrder) {
     Import-Module (Join-Path $PremiumMods "$mod.psm1") -Force -DisableNameChecking
 }
@@ -152,6 +148,10 @@ if ($PSCmdlet.ParameterSetName -eq 'Resume') {
         -NonInteractive: $NonInteractive `
         -Force:          $Force
 
+    # Store NoSeal on batch envelope so orchestrator can apply it per-UPN
+    # before evidence store initialization. Sealing is immutable per run.
+    $Batch | Add-Member -NotePropertyName 'NoSeal' -NotePropertyValue ([bool]$NoSeal) -Force
+
     $StatePath = Get-DecomBatchStatePath -Batch $Batch
     Write-Host "Entra Identity Decommissioning Control Plane — Premium v2.1" -ForegroundColor Cyan
     Write-Host ("Batch: {0} | UPNs: {1} | Ticket: {2} | Mode: {3}" -f `
@@ -173,6 +173,23 @@ if ($PolicyPath) {
     Write-Host "Policy file loaded: $PolicyPath" -ForegroundColor DarkGray
 }
 
+# ── Resolve operator identity BEFORE approval gate ───────────────────────────
+# Must happen here so approval record contains correct OperatorUPN.
+# NonInteractive -RequireApproval is rejected if identity cannot be resolved.
+try {
+    $mgCtx = Get-MgContext -ErrorAction SilentlyContinue
+    if ($mgCtx) {
+        $Batch.OperatorUPN = $mgCtx.Account
+        $mgUser = Get-MgUser -UserId $mgCtx.Account -Property Id -ErrorAction SilentlyContinue
+        if ($mgUser) { $Batch.OperatorObjectId = $mgUser.Id }
+    }
+} catch {}
+
+if ($RequireApproval -and $NonInteractive -and [string]::IsNullOrWhiteSpace($Batch.OperatorUPN)) {
+    throw 'Start-DecomBatch: cannot resolve OperatorUPN from Graph context. ' +
+          '-RequireApproval -NonInteractive requires a resolved operator identity for non-repudiation.'
+}
+
 # ── Approval gate ─────────────────────────────────────────────────────────────
 if ($RequireApproval) {
     Invoke-DecomBatchApproval `
@@ -182,42 +199,22 @@ if ($RequireApproval) {
 }
 
 # ── Run the batch ─────────────────────────────────────────────────────────────
+# Note: Parallel execution is not available in v2.0.
+# BatchOrchestratorParallel.psm1 requires a dedicated HTR pass before production use.
+# Sequential execution only. Parallel will be re-introduced in v2.x.
 try {
-    if ($Parallel -and $Batch.MaxParallel -gt 1) {
-        $BatchResult = Invoke-DecomBatchParallel `
-            -Batch              $Batch `
-            -LiteModulesPath    $LiteModules `
-            -PremiumModulesPath $PremiumMods `
-            -LiteWorkflowPath   $LiteWorkflow `
-            -OutOfOfficeMessage $OutOfOfficeMessage `
-            -RemoveLicenses:    $RemoveLicenses `
-            -SkipGroups:        $SkipGroups `
-            -SkipRoles:         $SkipRoles `
-            -SkipAuthMethods:   $SkipAuthMethods `
-            -SkipFailed:        $SkipFailed
-    } else {
-        $BatchResult = Invoke-DecomBatch `
-            -Batch               $Batch `
-            -OutOfOfficeMessage  $OutOfOfficeMessage `
-            -RemoveLicenses:     $RemoveLicenses `
-            -SkipGroups:         $SkipGroups `
-            -SkipRoles:          $SkipRoles `
-            -SkipAuthMethods:    $SkipAuthMethods `
-            -SkipFailed:         $SkipFailed `
-            -Cmdlet              $PSCmdlet
-    }
+    $BatchResult = Invoke-DecomBatch `
+        -Batch               $Batch `
+        -OutOfOfficeMessage  $OutOfOfficeMessage `
+        -RemoveLicenses:     $RemoveLicenses `
+        -SkipGroups:         $SkipGroups `
+        -SkipRoles:          $SkipRoles `
+        -SkipAuthMethods:    $SkipAuthMethods `
+        -SkipFailed:         $SkipFailed `
+        -Policy              $Policy `
+        -Cmdlet              $PSCmdlet
 
-    # ── Resolve operator identity post-auth (same pattern as Lite) ────────────
-    try {
-        $mgCtx = Get-MgContext -ErrorAction SilentlyContinue
-        if ($mgCtx) {
-            $Batch.OperatorUPN = $mgCtx.Account
-            $mgUser = Get-MgUser -UserId $mgCtx.Account -Property Id -ErrorAction SilentlyContinue
-            if ($mgUser) { $Batch.OperatorObjectId = $mgUser.Id }
-        }
-    } catch {}
-
-    # ── Final checkpoint with operator identity resolved ──────────────────────
+    # ── Final checkpoint ──────────────────────────────────────────────────────
     Save-DecomBatchState -Batch $Batch | Out-Null
 
     # ── Batch reports ────────────────────────────────────────────────

@@ -27,7 +27,7 @@ Set-StrictMode -Version Latest
 function _InferRisk {
     param([string]$Phase, [bool]$IsCritical, [string]$Status)
     if ($IsCritical -and $Phase -in @('Containment','AccessRemoval')) { return 'High' }
-    if ($Phase -in @('Compliance','Licensing')) { return 'High' }
+    if ($Phase -in @('Compliance','Licensing','ComplianceRemediation','LicenseRemediation','AzureRBAC','AppOwnership','DeviceRemediation')) { return 'High' }
     if ($Phase -in @('Mailbox','AccessRemoval')) { return 'Medium' }
     return 'Low'
 }

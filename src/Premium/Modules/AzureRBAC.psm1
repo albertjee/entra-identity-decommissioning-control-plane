@@ -71,36 +71,48 @@ function Get-DecomAzureRBACState {
 
         $direct    = [System.Collections.Generic.List[pscustomobject]]::new()
         $inherited = [System.Collections.Generic.List[pscustomobject]]::new()
+        $skipped   = [System.Collections.Generic.List[pscustomobject]]::new()
 
         foreach ($sub in $subscriptions) {
-            $null = Set-AzContext -SubscriptionId $sub.Id -ErrorAction SilentlyContinue
+            try {
+                $null = Set-AzContext -SubscriptionId $sub.Id -ErrorAction Stop
 
-            $assignments = @(Get-AzRoleAssignment -SignInName $Context.TargetUPN `
-                -ErrorAction SilentlyContinue)
+                $assignments = @(Get-AzRoleAssignment -SignInName $Context.TargetUPN `
+                    -ErrorAction Stop)
 
-            foreach ($a in $assignments) {
-                $entry = [pscustomobject]@{
-                    RoleAssignmentId = $a.RoleAssignmentId
-                    RoleDefinitionName = $a.RoleDefinitionName
-                    Scope            = $a.Scope
+                foreach ($a in $assignments) {
+                    $entry = [pscustomobject]@{
+                        RoleAssignmentId   = $a.RoleAssignmentId
+                        RoleDefinitionName = $a.RoleDefinitionName
+                        Scope              = $a.Scope
+                        SubscriptionId     = $sub.Id
+                        SubscriptionName   = $sub.Name
+                        IsInherited        = ($a.Scope -notmatch "^/subscriptions/$($sub.Id)" -and
+                                              $a.ObjectType -eq 'User')
+                    }
+                    if ($entry.IsInherited) {
+                        $inherited.Add($entry)
+                    } else {
+                        $direct.Add($entry)
+                    }
+                }
+            } catch {
+                # Inaccessible subscription — log as skipped, continue to next
+                $skipped.Add([pscustomobject]@{
                     SubscriptionId   = $sub.Id
                     SubscriptionName = $sub.Name
-                    IsInherited      = ($a.Scope -notmatch "^/subscriptions/$($sub.Id)$" -and
-                                        $a.ObjectType -eq 'User')
-                }
-                if ($entry.IsInherited) {
-                    $inherited.Add($entry)
-                } else {
-                    $direct.Add($entry)
-                }
+                    Reason           = $_.Exception.Message
+                })
             }
         }
 
         return [pscustomobject]@{
-            DirectAssignments   = $direct
+            DirectAssignments    = $direct
             InheritedAssignments = $inherited
-            DirectCount         = $direct.Count
-            InheritedCount      = $inherited.Count
+            SkippedSubscriptions = $skipped
+            DirectCount          = $direct.Count
+            InheritedCount       = $inherited.Count
+            SkippedCount         = $skipped.Count
             SubscriptionsScanned = $subscriptions.Count
         }
     } catch {

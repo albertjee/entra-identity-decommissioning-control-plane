@@ -415,7 +415,13 @@ function _CollectUpnReportSummaries {
                             CorrelationId = $liteReport.Summary.CorrelationId
                         }
                     }
-                } catch {}
+                } catch {
+                    # Record read failure as structured evidence — not silently swallowed
+                    $upnRecord.LiteSummary = [ordered]@{
+                        Status = 'Unknown'
+                        Error  = "Failed to read per-UPN report.json: $($_.Exception.Message)"
+                    }
+                }
             }
         }
 
