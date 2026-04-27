@@ -4,6 +4,13 @@
 #        Invoke-DecomGraphCall / Invoke-DecomExchangeCall retain try/catch context
 #        wrappers — available for callers that want structured error enrichment.
 
+# Set-DecomPhaseState is defined in State.psm1 — import it so Invoke-DecomPhase
+# can call it regardless of module load order in the caller's session.
+$script:stateMod = Join-Path $PSScriptRoot 'State.psm1'
+if (Test-Path $script:stateMod) {
+    Import-Module $script:stateMod -Force -DisableNameChecking
+}
+
 function Invoke-DecomPhase {
     param(
         [pscustomobject]$State,

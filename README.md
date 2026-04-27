@@ -1,30 +1,58 @@
 # Entra Identity Decommissioning Control Plane
 
-**Version:** v1.5 Stable  
-**Maturity:** Production-safety release candidate for controlled tenant validation  
-**Author:** Albert Jee — Enterprise Identity Architect | IAM Consultant  
+**Version:** Lite v1.5 (public) | Premium v2.0 (private — request access)
+**Maturity:** Production-safety release candidate for controlled tenant validation
+**Author:** Albert Jee — Enterprise Identity Architect | IAM Consultant
 **Copyright:** © 2026 Albert Jee. All rights reserved.
+
+---
+
+## Two Editions
+
+### Lite Edition (this repo — public)
+
+Single-UPN decommissioning workflow. Deterministic, evidence-driven, WhatIf-safe. Free for qualified practitioners.
+
+### Premium Edition (private repo — request access)
+
+Multi-UPN batch orchestration built on the Lite foundation. Adds:
+
+- **Batch control plane** — process N UPNs from a single run with per-UPN checkpointing and resume
+- **Per-UPN policy overrides** — evidence level, WhatIf, license removal per identity via JSON policy file
+- **Pre-flight approval gate** — signed approval record with expiry enforcement before batch execution
+- **Premium remediation phases** — litigation hold, license removal, device disable/wipe, app ownership, Azure RBAC removal
+- **Batch diff report** — pre-run WhatIf summary showing what would change per UPN with risk classification
+- **Batch reporting** — HTML + JSON roll-up reports, cross-UPN evidence manifest with SHA-256 hash chain
+- **191/191 Pester tests** — full unit test coverage including 10 high-severity gap tests
+
+**Request access:** Connect on LinkedIn and send a DM referencing this repo.
+
+---
 
 ## Executive Summary
 
-The Entra Identity Decommissioning Control Plane is a PowerShell reference implementation for safely decommissioning a single Microsoft 365 / Entra ID user principal using a deterministic, evidence-driven workflow.
+The Entra Identity Decommissioning Control Plane is a PowerShell reference implementation for safely decommissioning Microsoft 365 / Entra ID user principals using a deterministic, evidence-driven workflow.
 
 This project treats identity decommissioning as a **control-plane operation**, not a help-desk script. The goal is to reduce revocation latency, preserve mailbox/compliance continuity, block unsafe license removal, and generate audit-defensible evidence for every meaningful action.
 
+---
+
 ## Production Safety Position
 
-v1.0 is designed for controlled production use only after the operator has completed the tenant validation guide and verified required permissions in a lab or pilot tenant.
+Designed for controlled production use only after the operator has completed the tenant validation guide and verified required permissions in a lab or pilot tenant.
 
 The tool is intentionally conservative:
 
-- destructive actions support PowerShell `ShouldProcess`
+- Destructive actions support PowerShell `ShouldProcess`
 - `-WhatIf` produces evidence without mutating tenant state
-- license removal is blocked when compliance or mailbox prerequisites are unresolved
-- pre-action and post-action snapshots are captured
-- every action emits a forensic-grade evidence event
+- License removal is blocked when compliance or mailbox prerequisites are unresolved
+- Pre-action and post-action snapshots are captured
+- Every action emits a forensic-grade evidence event
 - JSON, HTML, and NDJSON evidence outputs are generated
 
-## Scope
+---
+
+## Scope (Lite Edition)
 
 ### In Scope
 
@@ -43,15 +71,27 @@ The tool is intentionally conservative:
 - Group, privileged role, ownership, OAuth, and app-role discovery
 - Forensic evidence output
 
-### Out of Scope
+### Out of Scope (Lite)
 
+- Multi-UPN batch execution (Premium)
 - Hybrid Exchange / AD DS decommissioning
-- Destructive bulk execution
 - Automatic group removal
 - Automatic privileged-role removal
 - Automatic application ownership reassignment
 - Automatic OAuth grant removal
 - Full Purview eDiscovery case workflow automation
+
+---
+
+## Pester Test Suite (Lite)
+
+A full Pester v5 unit test suite is included covering all Lite workflow phases:
+
+```powershell
+Invoke-Pester .\tests\Decom.Tests.ps1 -Output Detailed
+```
+
+---
 
 ## Requirements
 
@@ -60,18 +100,16 @@ The tool is intentionally conservative:
 - ExchangeOnlineManagement module
 - Admin account with required delegated privileges
 
-Recommended modules:
-
 ```powershell
-Install-Module Microsoft.Graph -Scope CurrentUser
+Install-Module Microsoft.Graph.Identity.DirectoryManagement -Scope CurrentUser
 Install-Module ExchangeOnlineManagement -Scope CurrentUser
 Install-Module Pester -Scope CurrentUser
 Install-Module PSScriptAnalyzer -Scope CurrentUser
 ```
 
-## Required Graph Scopes
+---
 
-The default connection requests:
+## Required Graph Scopes
 
 - `User.ReadWrite.All`
 - `Directory.ReadWrite.All`
@@ -81,7 +119,7 @@ The default connection requests:
 - `AppRoleAssignment.ReadWrite.All`
 - `DelegatedPermissionGrant.Read.All`
 
-Tenant-specific consent and RBAC may require additional permissions.
+---
 
 ## Quick Start
 
@@ -127,6 +165,8 @@ pwsh ./src/Start-Decom.ps1 `
   -Force
 ```
 
+---
+
 ## Output
 
 Each run creates a unique output directory:
@@ -137,7 +177,10 @@ output/<RunId>/
   evidence.ndjson
   report.json
   report.html
+  evidence.manifest.json
 ```
+
+---
 
 ## Workflow Phases
 
@@ -151,7 +194,9 @@ output/<RunId>/
 8. Post-action identity snapshot
 9. Reporting
 
-## Repository Layout
+---
+
+## Repository Layout (Lite Edition)
 
 ```text
 src/
@@ -174,12 +219,9 @@ src/
     Validation.psm1
 
 docs/
-  architecture.md
   compliance-model.md
   evidence-model.md
-  permissions.md
-  production-runbook.md
-  validation-guide.md
+  runbook.md
 
 tests/
   Decom.Tests.ps1
@@ -188,9 +230,13 @@ examples/
   sample-report.schema.json
 ```
 
+---
+
 ## GitHub Topics
 
 `entra-id`, `microsoft-365`, `identity-governance`, `zero-trust`, `iam`, `powershell`, `microsoft-graph`, `exchange-online`, `audit`, `security-architecture`
+
+---
 
 ## Safety Notice
 

@@ -1,6 +1,7 @@
 # Security Policy
 
 ## Scope
+
 This repository contains a **privileged control-plane reference implementation** for
 Entra ID / Microsoft 365 user decommissioning. It is **not** a consumer tool or
 unattended automation service.
@@ -9,7 +10,8 @@ unattended automation service.
 
 | Version | Supported |
 |---|---|
-| v1.5 / v1.5a | ✅ Current |
+| Lite v1.5 | ✅ Current |
+| Premium v2.0 | ✅ Current (private repo — request access) |
 | v1.4 | ✅ Security fixes backported |
 | < v1.4 | ❌ Not supported |
 
@@ -58,13 +60,13 @@ role relationships, and compliance state. Operators are responsible for:
 - Verification of evidence integrity via `evidence.manifest.json`
 - Not syncing `output/` to general-purpose cloud sync tools
 
-Evidence is **hash-chain sealed** by default (v1.5+). Encryption at rest is an
-operator responsibility.
+Evidence is **hash-chain sealed** by default (v1.5+ Lite, v2.0 Premium).
+Encryption at rest is an operator responsibility.
 
 ## Known Design Limitations (not vulnerabilities)
 
-- Single-UPN scope only (Lite edition by design)
-- Discovery without automatic remediation of groups, roles, OAuth grants
+- Lite edition: single-UPN scope only (by design)
+- Discovery without automatic remediation of groups, roles, OAuth grants (Lite)
 - No built-in encryption at rest for evidence artifacts
 - Delegated auth only (no app-only / workload identity mode)
 - Cryptographic signing of manifest is deferred (hash chain provides detection)
