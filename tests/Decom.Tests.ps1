@@ -1,6 +1,6 @@
 # Decom.Tests.ps1 — Pester v5 test suite
-# v1.5: Added tests for evidence sealing, operator identity, TicketId enforcement,
-#        manifest generation, SealEvidence flag, hash chain verification,
+# v1.5: Added tests for operator identity, TicketId enforcement,
+#        manifest generation,
 #        SECURITY.md presence, threat model doc presence.
 
 BeforeAll {
@@ -35,7 +35,7 @@ BeforeAll {
     function Remove-DecomLicenses                                { param([pscustomobject]$Context, $Cmdlet) New-DecomActionResult -ActionName 'Remove Licenses' -Phase 'Licensing' -Status 'Success' -IsCritical $true -TargetUPN $Context.TargetUPN -Message 'Removed.' -ControlObjective 'License' -RiskMitigated 'Spend' }
     function Get-DecomRequiredGraphScopes                        { return @('User.ReadWrite.All','Directory.ReadWrite.All','Organization.Read.All','RoleManagement.Read.Directory','Application.Read.All','AppRoleAssignment.Read.All','DelegatedPermissionGrant.Read.All') }
     function Write-DecomEvidenceManifest                         { param([pscustomobject]$Context, [string]$OutputPath) }
-    function Initialize-DecomEvidenceStore                       { param([pscustomobject]$Context, [string]$RunId, [string]$NdjsonPath) $Context|Add-Member -Force -NotePropertyName Evidence -NotePropertyValue ([System.Collections.Generic.List[object]]::new()); $Context|Add-Member -Force -NotePropertyName RunId -NotePropertyValue $RunId; $Context|Add-Member -Force -NotePropertyName EvidencePrevHash -NotePropertyValue 'GENESIS' }
+    function Initialize-DecomEvidenceStore                       { param([pscustomobject]$Context, [string]$RunId, [string]$NdjsonPath) $Context|Add-Member -Force -NotePropertyName Evidence -NotePropertyValue ([System.Collections.Generic.List[object]]::new()); $Context|Add-Member -Force -NotePropertyName RunId -NotePropertyValue $RunId }
 }
 
 Describe 'Entra Identity Decommissioning Control Plane v1.5' {
@@ -86,73 +86,9 @@ Describe 'Entra Identity Decommissioning Control Plane v1.5' {
         }
     }
 
-    # ── Evidence sealing ───────────────────────────────────────────────────────
-
-    Context 'Evidence sealing — hash chain' {
-
-        It 'Get-DecomSha256Hex returns 64-char hex string' {
-            $hash = Get-DecomSha256Hex -Text 'test input'
-            $hash.Length | Should -Be 64
-            $hash | Should -Match '^[0-9a-f]{64}$'
-        }
-
-        It 'Get-DecomSha256Hex is deterministic' {
-            Get-DecomSha256Hex 'hello' | Should -Be (Get-DecomSha256Hex 'hello')
-        }
-
-        It 'Get-DecomSha256Hex is sensitive to input changes' {
-            Get-DecomSha256Hex 'hello' | Should -Not -Be (Get-DecomSha256Hex 'Hello')
-        }
-
-        It 'Write-DecomEvidenceSeal adds EventHash and PrevHash' {
-            $ev     = @{ ActionName='Test'; Status='Success'; TimestampUtc='2026-04-25T00:00:00Z' }
-            $sealed = Write-DecomEvidenceSeal -Event $ev -PrevHash 'GENESIS'
-            $sealed.Event.Keys | Should -Contain 'EventHash'
-            $sealed.Event.Keys | Should -Contain 'PrevHash'
-            $sealed.Event['PrevHash'] | Should -Be 'GENESIS'
-            $sealed.NewPrevHash | Should -Not -BeNullOrEmpty
-        }
-
-        It 'Write-DecomEvidenceSeal produces different hashes for different inputs' {
-            $ev1 = @{ ActionName='ResetPassword'; Status='Success' }
-            $ev2 = @{ ActionName='RevokeSession'; Status='Success' }
-            $s1  = Write-DecomEvidenceSeal -Event $ev1 -PrevHash 'GENESIS'
-            $s2  = Write-DecomEvidenceSeal -Event $ev2 -PrevHash 'GENESIS'
-            $s1.NewPrevHash | Should -Not -Be $s2.NewPrevHash
-        }
-
-        It 'hash chain links events correctly' {
-            $ev1     = @{ ActionName='Step1'; Status='Success' }
-            $sealed1 = Write-DecomEvidenceSeal -Event $ev1 -PrevHash 'GENESIS'
-            $ev2     = @{ ActionName='Step2'; Status='Success' }
-            $sealed2 = Write-DecomEvidenceSeal -Event $ev2 -PrevHash $sealed1.NewPrevHash
-            $sealed2.Event['PrevHash'] | Should -Be $sealed1.NewPrevHash
-        }
-
-        It 'tampered event produces different hash' {
-            $ev      = @{ ActionName='Reset'; Status='Success'; Message='ok' }
-            $sealed  = Write-DecomEvidenceSeal -Event $ev -PrevHash 'GENESIS'
-            $originalHash = $sealed.NewPrevHash
-            # Simulate tampering
-            $tampered = @{ ActionName='Reset'; Status='Failed'; Message='tampered' }
-            $resealed = Write-DecomEvidenceSeal -Event $tampered -PrevHash 'GENESIS'
-            $resealed.NewPrevHash | Should -Not -Be $originalHash
-        }
-    }
-
-    # ── Context — operator identity and sealing flag ───────────────────────────
+    # ── Context — operator identity ────────────────────────────────────────────
 
     Context 'Context — v1.5 fields' {
-
-        It 'SealEvidence defaults to true' {
-            $ctx = New-DecomRunContext -TargetUPN 'u@c.com' -OutputPath 'out'
-            $ctx.SealEvidence | Should -BeTrue
-        }
-
-        It 'NoSeal flag disables sealing' {
-            $ctx = New-DecomRunContext -TargetUPN 'u@c.com' -OutputPath 'out' -NoSeal
-            $ctx.SealEvidence | Should -BeFalse
-        }
 
         It 'OperatorUPN can be set on context' {
             $ctx = New-DecomRunContext -TargetUPN 'u@c.com' -OutputPath 'out' -OperatorUPN 'admin@contoso.com'
@@ -201,12 +137,6 @@ Describe 'Entra Identity Decommissioning Control Plane v1.5' {
             else { Set-ItResult -Skipped -Because 'Evidence module not loaded by name' }
         }
 
-        It 'Evidence.psm1 exports Get-DecomSha256Hex' {
-            $mod = Get-Module Evidence -ErrorAction SilentlyContinue
-            if ($mod) { $mod.ExportedFunctions.Keys | Should -Contain 'Get-DecomSha256Hex' }
-            else { Set-ItResult -Skipped -Because 'Evidence module not loaded by name' }
-        }
-
         It 'Evidence.psm1 does not export Assert-DecomEvidenceIntegrity' {
             $mod = Get-Module Evidence -ErrorAction SilentlyContinue
             if ($mod) { $mod.ExportedFunctions.Keys | Should -Not -Contain 'Assert-DecomEvidenceIntegrity' }
@@ -240,7 +170,6 @@ Describe 'Entra Identity Decommissioning Control Plane v1.5' {
             $ctx.EvidenceLevel  | Should -Be 'Forensic'
             $ctx.ValidationOnly | Should -BeTrue
             $ctx.CorrelationId  | Should -Not -BeNullOrEmpty
-            $ctx.SealEvidence   | Should -BeTrue
         }
     }
 

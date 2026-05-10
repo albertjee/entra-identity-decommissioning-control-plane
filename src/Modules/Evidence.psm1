@@ -1,35 +1,6 @@
-# Evidence.psm1 — Evidence store, event emission, and tamper-evident sealing
-# v1.5: Hash-chain sealing added (Get-DecomSha256Hex, Write-DecomEvidenceSeal).
-#        OperatorUPN and OperatorObjectId added to every evidence event.
-#        evidence.manifest.json written at end of run for integrity anchor.
-#        SealEvidence context flag controls opt-in sealing (default: $true).
-
-# ── Cryptographic helpers ──────────────────────────────────────────────────────
-
-function Get-DecomSha256Hex {
-    param([Parameter(Mandatory)][string]$Text)
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        ($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Text)) |
-            ForEach-Object { $_.ToString('x2') }) -join ''
-    } finally { $sha.Dispose() }
-}
-
-# Seals a single evidence event into a hash chain.
-# Returns: @{ Event = <sealed hashtable>; NewPrevHash = <hex string> }
-function Write-DecomEvidenceSeal {
-    param(
-        [Parameter(Mandatory)][hashtable]$Event,
-        [Parameter(Mandatory)][string]$PrevHash
-    )
-    $base = @{} + $Event
-    $base.Remove('EventHash') | Out-Null
-    $base['PrevHash'] = $PrevHash
-    $baseJson      = ($base | ConvertTo-Json -Depth 50 -Compress)
-    $eventHash     = Get-DecomSha256Hex ($baseJson + '|' + $PrevHash)
-    $base['EventHash'] = $eventHash
-    return @{ Event = $base; NewPrevHash = $eventHash }
-}
+# Evidence.psm1 — Evidence store and event emission.
+# v1.5: OperatorUPN and OperatorObjectId added to every evidence event.
+#        evidence.manifest.json written at end of run.
 
 # ── Evidence store ─────────────────────────────────────────────────────────────
 
@@ -43,7 +14,6 @@ function Initialize-DecomEvidenceStore {
     )
     $Context | Add-Member -Force -NotePropertyName Evidence         -NotePropertyValue ([System.Collections.Generic.List[object]]::new())
     $Context | Add-Member -Force -NotePropertyName RunId            -NotePropertyValue $RunId
-    $Context | Add-Member -Force -NotePropertyName EvidencePrevHash -NotePropertyValue 'GENESIS'
     $script:DecomEvidenceNdjsonPath = $NdjsonPath
     if ($NdjsonPath) { New-Item -ItemType File -Path $NdjsonPath -Force | Out-Null }
 }
@@ -95,17 +65,9 @@ function Add-DecomEvidenceEvent {
     $eventObj = [pscustomobject]$eventHt
     $Context.Evidence.Add($eventObj)
 
-    # Write to NDJSON with optional sealing
     if ($script:DecomEvidenceNdjsonPath) {
-        if ($Context.SealEvidence -eq $true) {
-            $sealed = Write-DecomEvidenceSeal -Event $eventHt -PrevHash $Context.EvidencePrevHash
-            $Context.EvidencePrevHash = $sealed.NewPrevHash
-            Add-Content -Path $script:DecomEvidenceNdjsonPath `
-                -Value ($sealed.Event | ConvertTo-Json -Depth 50 -Compress)
-        } else {
-            Add-Content -Path $script:DecomEvidenceNdjsonPath `
-                -Value ($eventHt | ConvertTo-Json -Depth 50 -Compress)
-        }
+        Add-Content -Path $script:DecomEvidenceNdjsonPath `
+            -Value ($eventHt | ConvertTo-Json -Depth 50 -Compress)
     }
 
     return $eventObj
@@ -124,8 +86,6 @@ function Write-DecomEvidenceManifest {
         TargetUPN      = $Context.TargetUPN
         OperatorUPN    = if ($Context.OperatorUPN) { $Context.OperatorUPN } else { $null }
         TicketId       = if ($Context.TicketId)    { $Context.TicketId }    else { $null }
-        Sealed         = ($Context.SealEvidence -eq $true)
-        FinalEventHash = $Context.EvidencePrevHash
         EventCount     = $Context.Evidence.Count
         GeneratedUtc   = (Get-Date).ToUniversalTime().ToString('o')
     }
@@ -134,4 +94,4 @@ function Write-DecomEvidenceManifest {
     return $manifestPath
 }
 
-Export-ModuleMember -Function Initialize-DecomEvidenceStore, Add-DecomEvidenceEvent, Write-DecomEvidenceManifest, Get-DecomSha256Hex, Write-DecomEvidenceSeal
+Export-ModuleMember -Function Initialize-DecomEvidenceStore, Add-DecomEvidenceEvent, Write-DecomEvidenceManifest

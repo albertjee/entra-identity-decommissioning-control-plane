@@ -1,7 +1,6 @@
 # Start-Decom.ps1 — Launcher / workflow controller
 # v1.5: OperatorUPN resolved from MgContext after auth.
 #        TicketId mandatory when Force+NonInteractive (automation mode governance).
-#        SealEvidence default true; -NoSeal opt-out for dev/test.
 #        evidence.manifest.json written at end of every run.
 #        Version updated to v1.5.
 
@@ -25,8 +24,7 @@ param(
     [switch]$RemoveLicenses,
     [switch]$ValidationOnly,
     [switch]$NonInteractive,
-    [switch]$Force,
-    [switch]$NoSeal   # opt-out of evidence sealing (dev/test only)
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -66,14 +64,13 @@ $Context = New-DecomRunContext `
     -WhatIfMode:    ([bool]$WhatIfPreference) `
     -NonInteractive:$NonInteractive `
     -Force:         $Force `
-    -ValidationOnly:$ValidationOnly `
-    -NoSeal:        $NoSeal
+    -ValidationOnly:$ValidationOnly
 
 $State = New-DecomState -RunId $RunId
 Initialize-DecomEvidenceStore -Context $Context -RunId $RunId -NdjsonPath $EvidenceFile
 
 Write-DecomConsole -Level 'INFO' -Message "Entra Identity Decommissioning Control Plane v1.5"
-Write-DecomConsole -Level 'INFO' -Message "Target: $TargetUPN | RunId: $RunId | Mode: $(if($ValidationOnly){'ValidationOnly'}elseif($WhatIfPreference){'WhatIf'}else{'Live'}) | Sealed: $(-not $NoSeal)"
+Write-DecomConsole -Level 'INFO' -Message "Target: $TargetUPN | RunId: $RunId | Mode: $(if($ValidationOnly){'ValidationOnly'}elseif($WhatIfPreference){'WhatIf'}else{'Live'})"
 
 try {
     $Result = Invoke-DecomWorkflow `

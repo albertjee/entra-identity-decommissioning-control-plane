@@ -1,6 +1,5 @@
 # Models.psm1 — Core data contracts for the Decom Control Plane
 # v1.5: OperatorUPN, OperatorObjectId added to Context.
-#        SealEvidence flag added (default true).
 #        TicketId mandatory in Force+NonInteractive mode (enforced in Start-Decom.ps1).
 #        Version updated to v1.5.
 
@@ -16,7 +15,6 @@ function New-DecomRunContext {
         [switch]$NonInteractive,
         [switch]$Force,
         [switch]$ValidationOnly,
-        [switch]$NoSeal,          # opt-out of evidence sealing (testing/dev only)
         [string]$OperatorUPN,     # v1.5: operator identity for repudiation resistance
         [string]$OperatorObjectId # v1.5: operator AAD ObjectId
     )
@@ -29,7 +27,6 @@ function New-DecomRunContext {
         NonInteractive   = [bool]$NonInteractive
         Force            = [bool]$Force
         ValidationOnly   = [bool]$ValidationOnly
-        SealEvidence     = -not [bool]$NoSeal   # default: seal evidence
         OperatorUPN      = $OperatorUPN
         OperatorObjectId = $OperatorObjectId
         StartedUtc       = (Get-Date).ToUniversalTime().ToString('o')
@@ -113,7 +110,6 @@ function New-DecomWorkflowReturn {
             Status        = if ($StopReason) { 'Stopped' } else { 'Completed' }
             Version       = 'v1.5'
             EvidenceLevel = $Context.EvidenceLevel
-            Sealed        = $Context.SealEvidence
         }
     }
 }
