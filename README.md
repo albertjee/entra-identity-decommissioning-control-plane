@@ -15,15 +15,7 @@ Single-UPN decommissioning workflow. Deterministic, evidence-driven, WhatIf-safe
 
 ### Premium Edition (private repo — request access)
 
-Multi-UPN batch orchestration built on the Lite foundation. Adds:
-
-- **Batch control plane** — process N UPNs from a single run with per-UPN checkpointing and resume
-- **Per-UPN policy overrides** — evidence level, WhatIf, license removal per identity via JSON policy file
-- **Pre-flight approval gate** — signed approval record with expiry enforcement before batch execution
-- **Premium remediation phases** — litigation hold, license removal, device disable/wipe, app ownership, Azure RBAC removal
-- **Batch diff report** — pre-run WhatIf summary showing what would change per UPN with risk classification
-- **Batch reporting** — HTML + JSON roll-up reports, cross-UPN evidence manifest with SHA-256 hash chain
-- **191/191 Pester tests** — full unit test coverage including 10 high-severity gap tests
+The private Premium edition extends the Lite foundation for enterprise-scale operational workflows. Implementation details and Premium-only tests are intentionally not included in this public Lite repository.
 
 **Request access:** Connect on LinkedIn and send a DM referencing this repo.
 

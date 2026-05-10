@@ -1,0 +1,40 @@
+name: Public Lite Boundary
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - main
+
+jobs:
+  boundary-check:
+    name: Block Premium implementation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Reject Premium-only paths
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          forbidden_paths="$(git ls-files 'src/Premium/**' 'tests/Premium/**')"
+          if [ -n "$forbidden_paths" ]; then
+            echo "Premium-only paths are not allowed in the public Lite repository:"
+            echo "$forbidden_paths"
+            exit 1
+          fi
+
+      - name: Reject Premium implementation terms
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pattern='Batch''Orchestrator|Azure''RBAC|Batch''Approval|Start-Decom''Batch|Batch''Diff|Batch''Policy|Premium ''v2'
+          if git grep -n -i -E "$pattern" -- . ':!README.md' ':!SECURITY.md' ':!CHANGELOG.md' ':!docs/**'; then
+            echo "Premium implementation terms were found outside approved positioning documents."
+            exit 1
+          fi
